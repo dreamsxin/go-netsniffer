@@ -1,0 +1,19 @@
+.items-center {
+    align-items: center;
+}
+.flex {
+    display: flex;
+}
+.text-sm {
+    font-size: 0.875rem;
+    line-height: 1.25rem;
+}
+.font-600 {
+    font-weight: 600;
+}
+.mr-2 {
+    margin-right: 0.5rem;
+}
+.mr-3 {
+    margin-right: 0.75rem;
+}
