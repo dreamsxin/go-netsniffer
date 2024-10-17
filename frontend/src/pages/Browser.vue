@@ -1,7 +1,7 @@
 <script setup>
 import { reactive, onMounted } from 'vue'
 import { EventsOn } from '../../wailsjs/runtime/runtime';
-import { StartProxy, Test } from '../../wailsjs/go/main/App'
+import { StartProxy, StopProxy, Test } from '../../wailsjs/go/main/App'
 
 onMounted(() => {
 })
@@ -32,6 +32,12 @@ function start() {
   })
 }
 
+function stop() {
+  StopProxy().then(result => {
+    data.resultText = result
+  })
+}
+
 function test() {
   Test().then(result => {
     //data.resultText = result
@@ -45,6 +51,7 @@ const tableData = reactive([
 <template>
   <main>
     <button class="btn" @click="start">Start Proxy</button>
+    <button class="btn" @click="stop">Stop Proxy</button>
     <button class="btn" @click="test">Test</button>
     <div>{{ data.resultText }}</div>
     <el-table :data="tableData" style="width: 100%">
