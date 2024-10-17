@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/dreamsxin/go-netsniffer/cert"
+	"github.com/dreamsxin/go-netsniffer/models"
 	"github.com/dreamsxin/go-netsniffer/proxy"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -17,15 +19,19 @@ const authorityName string = "GoNetSniffer Proxy Authority"
 
 // App struct
 type App struct {
-	ctx       context.Context
-	port      int
-	autoProxy bool
+	ctx    context.Context
+	config models.Config
 }
 
 // NewApp creates a new App application struct
 func NewApp() *App {
 
-	a := &App{}
+	a := &App{
+		config: models.Config{
+			Port:      9000,
+			AutoProxy: true,
+		},
+	}
 
 	return a
 }
@@ -34,24 +40,29 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 }
 
+func (a *App) GetConfig() models.Config {
+	return a.config
+}
+
+func (a *App) SetConfig(config models.Config) {
+	a.config = config
+	log.Println("SetConfig", config)
+}
+
 // 从请求中获取 cookie
-func (a *App) StartProxy(port int, autoProxy bool) error {
-	a.port = port
-	a.autoProxy = autoProxy
+func (a *App) StartProxy() error {
 	// serve proxy
-	if a.autoProxy {
-		if err := proxy.EnableProxy(a.port); err != nil { // todo do after serve
+	if a.config.AutoProxy {
+		if err := proxy.EnableProxy(a.config.Port); err != nil { // todo do after serve
 			return err
 		}
 	}
-	runtime.EventsEmit(a.ctx, "StartProxy", a.port)
-	proxy.Serve(a.port, authorityName, handler.NewRequestLogger(a.ctx))
-	return nil
+	return proxy.Serve(a.config.Port, authorityName, handler.NewRequestLogger(a.ctx))
 }
 
 func (a *App) StopProxy() error {
 	cert.UninstallCert(authorityName)
-	if a.autoProxy {
+	if a.config.AutoProxy {
 		proxy.DisableProxy()
 	}
 	return nil

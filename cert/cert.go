@@ -160,17 +160,18 @@ func WriteCertToFile(cert *x509.Certificate, certFilePath string) error {
 
 }
 
-func SaveBlockToFile(filename string, block *pem.Block) {
+func SaveBlockToFile(filename string, block *pem.Block) error {
 	outFile, err := os.Create(filename)
 	if err != nil {
-		panic(err)
+		return err
 	}
 	defer outFile.Close()
 
 	err = pem.Encode(outFile, block)
 	if err != nil {
-		panic(err)
+		return err
 	}
+	return nil
 }
 
 func SaveToFile(filename string, data []byte) {

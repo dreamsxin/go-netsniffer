@@ -1,74 +1,103 @@
 <script setup>
-import { ref, useTemplateRef, watch, onMounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
-import { ElNotification as notify } from 'element-plus'
-import {
-  Document,
-  Menu as IconMenu,
-  Location,
-  Setting,
-} from '@element-plus/icons-vue'
+import { EventsOn } from '../wailsjs/runtime/runtime'
+import { ref, reactive, useTemplateRef, watch, onMounted } from 'vue'
+import { ElNotification } from 'element-plus'
+import { GetConfig, SetConfig, StartProxy, StopProxy, Test } from '../wailsjs/go/main/App'
 
-const route = useRoute();
-const router = useRouter();
-
-function getCurrentRouteList() {
-  return router.currentRoute.value.matched;
-}
-
-const list = ref([])
-watch(route, () => {
-  list.value = getCurrentRouteList();
-  console.log("watch", route.path)
-});
-
-const onBack = () => {
-  notify('Back')
-}
-
-const handleOpen = (key, keyPath) => {
-  console.log(key, keyPath)
-}
-const handleClose = (key, keyPath) => {
-  console.log(key, keyPath)
-}
-
-// const message = ref('Hello Vue 3!')
-// const input = useTemplateRef('my-input')
+const data = reactive({
+  config: {},
+  resultText: "",
+})
 
 onMounted(() => {
-  list.value = getCurrentRouteList();
+  GetConfig().then(config => {
+    data.config = config
+  })
 })
+
+EventsOn("StartProxy", function (v) {
+  data.resultText = v
+  ElNotification({
+    title: 'Success',
+    message: '代理启动成功',
+    type: 'success',
+  })
+});
+
+EventsOn("Test", function (v) {
+  data.resultText = v
+});
+
+EventsOn("Packet", function (v) {
+  console.log("Packet", v)
+  tableData.push(v)
+});
+
+
+function start() {
+  StartProxy(data.port, data.autoProxy).then(result => {
+    data.resultText = result
+  })
+}
+
+function stop() {
+  StopProxy().then(result => {
+    data.resultText = result
+  })
+}
+
+function test() {
+  Test().then(result => {
+    //data.resultText = result
+    console.log(result)
+  })
+}
+
+const tableData = reactive([
+])
+
+
+function handleChange() {
+
+  SetConfig(data.config).then(result => {
+    //data.resultText = result
+    if (result == null) {
+      ElNotification({
+        title: 'Success',
+        message: '配置修改成功',
+        type: 'success',
+      })
+    }
+  })
+}
 
 </script>
 
 <template>
   <el-container>
-    <el-aside width="200px">
-      <el-menu :default-active="$route.path" @open="handleOpen" @close="handleClose" router>
-        <template v-for="(rule, index) in $router.options.routes">
-          <el-sub-menu v-if="rule.children && rule.children.length > 0" :key="index" :index="rule.path">
-            <template #title><el-icon>
-                <component :is="rule.icon"></component>
-              </el-icon>
-              <span>{{ rule.name }}</span></template>
-            <el-menu-item-group title="Group One">
-              <el-menu-item v-for="(child, index) in rule.children" :key="index"
-                :index="rule.path + '/' + child.path">{{
-                  child.name }}
-              </el-menu-item>
-            </el-menu-item-group>
-          </el-sub-menu>
-          <el-menu-item v-else :key="index + 1" :index="rule.path"><el-icon>
-              <component :is="rule.icon"></component>
-            </el-icon>
-            <span>{{ rule.name }}</span>
-          </el-menu-item>
-        </template>
-      </el-menu>
-    </el-aside>
+    <el-header>
+      <el-input-number v-model="data.config.Port" @change="handleChange" />
+      <el-switch v-model="data.config.AutoProxy" active-text="自动代理" inactive-text="自动代理"
+        style="--el-switch-on-color: #13ce66; --el-switch-off-color: #ff4949" @change="handleChange" />
+      <button class="btn" @click="start">Start Proxy</button>
+      <button class="btn" @click="stop">Stop Proxy</button>
+      <button class="btn" @click="test">Test</button>
+    </el-header>
     <el-main>
-      <RouterView />
+      <div>{{ data.resultText }}</div>
+      <el-table :data="tableData" style="width: 100%" max-height="250">
+        <el-table-column type="expand">
+          <template #default="props">
+            <div m="4">{{ props.row.Body }}
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="Date" prop="Date" />
+        <el-table-column label="PacketType" prop="PacketType" />
+        <el-table-column label="Method" prop="Method" />
+        <el-table-column label="Url" prop="URL" />
+      </el-table>
     </el-main>
   </el-container>
+  <el-footer></el-footer>
 </template>
