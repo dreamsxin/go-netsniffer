@@ -4,38 +4,46 @@ import { ref, reactive, useTemplateRef, watch, onMounted, computed } from 'vue'
 import { ElNotification } from 'element-plus'
 import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test } from '../wailsjs/go/main/App'
 
+const header = useTemplateRef('header')
+const footer = useTemplateRef('footer')
+
 const data = reactive({
   config: {},
   resultText: "",
-  windowHeight: 0,
+  windowHeight: 768,
+  headerheight: 100,
+  ftooerheight: 100,
+  rate: 0,
 })
 
-
-let mainheight = computed(() => data.windowHeight - 200)
+let mainheight = computed(() => data.windowHeight - data.headerheight - data.ftooerheight - 40)
 
 const getWindowInfo = () => {
-    data.windowHeight = window.innerHeight
+  data.windowHeight = window.innerHeight
 };
 
 const debounce = (fn, delay) => {
-	let timer;
-	return function() {
-		if (timer) {
-			clearTimeout(timer);
-		}
-		timer = setTimeout(() => {
-			fn();
-		}, delay);
-	}
+  let timer;
+  return function () {
+    if (timer) {
+      clearTimeout(timer);
+    }
+    timer = setTimeout(() => {
+      fn();
+    }, delay);
+  }
 };
 
 onMounted(() => {
-  
+  data.headerheight = header.value?.$el.offsetHeight
+  data.ftooerheight = footer.value?.$el.offsetHeight
+  console.log("onMounted", data.headerheight, data.ftooerheight)
+
   getWindowInfo();
   GetConfig().then(config => {
     data.config = config
   })
-  window.addEventListener('resize', debounce(getWindowInfo, 500));// 监听窗口大小变化
+  window.addEventListener('resize', debounce(getWindowInfo, 100));// 监听窗口大小变化
 })
 
 const activeName = ref('first')
@@ -188,7 +196,7 @@ function handleChange() {
 
 <template>
   <el-container height="100vh">
-    <el-header class="affix-container">
+    <el-header ref="header" class="affix-container">
       <el-affix :offset="10">
         <el-backtop :right="10" :bottom="10" />
         <el-space>
@@ -224,13 +232,11 @@ function handleChange() {
         <el-table-column label="StatusCode" prop="StatusCode" width="200" />
       </el-table>
     </el-main>
-    <el-footer>
-      <el-tabs v-model="activeName" type="border-card" class="demo-tabs" @tab-click="handleClick">
-        <el-tab-pane label="User" name="first">User</el-tab-pane>
-        <el-tab-pane label="Config" name="second">Config</el-tab-pane>
-        <el-tab-pane label="Role" name="third">Role</el-tab-pane>
-        <el-tab-pane label="Task" name="fourth">Task</el-tab-pane>
-      </el-tabs>
+    <el-footer ref="footer">
+      <el-space>
+      <el-badge is-dot class="item">帮助</el-badge>
+      <el-rate v-model="data.rate" allow-half />
+    </el-space>
     </el-footer>
   </el-container>
 </template>
@@ -239,5 +245,10 @@ function handleChange() {
   text-align: center;
   border-radius: 4px;
   background: var(--el-color-primary-light-9);
+}
+
+.item {
+  margin-top: 10px;
+  margin-right: 40px;
 }
 </style>
