@@ -27,5 +27,6 @@ type Packet struct {
 	Body          string
 	Status        string // e.g. "200 OK"
 	StatusCode    int    // e.g. 200
+	ContentType   string
 	ContentLength int64
 }

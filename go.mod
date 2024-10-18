@@ -7,6 +7,7 @@ toolchain go1.23.2
 require (
 	github.com/andybalholm/brotli v1.1.1
 	github.com/google/martian/v3 v3.3.3
+	github.com/valyala/gozstd v1.21.2
 	github.com/wailsapp/wails/v2 v2.9.2
 )
 

@@ -8,10 +8,12 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/andybalholm/brotli"
 	"github.com/dreamsxin/go-netsniffer/models"
+	"github.com/valyala/gozstd"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 )
 
@@ -41,9 +43,6 @@ func init() {
 // 从请求中获取 cookie
 func (r *RequestLogger) ModifyRequest(req *http.Request) error {
 
-	if req.Method == "OPTIONS" || req.Method == "CONNECT" {
-		return nil
-	}
 	var data models.Packet
 	data.PacketType = models.REQUEST
 	data.Date = time.Now().Format(time.DateTime)
@@ -55,8 +54,13 @@ func (r *RequestLogger) ModifyRequest(req *http.Request) error {
 	data.Path = req.URL.Path
 	data.URL = req.URL.String()
 	data.Header = req.Header
+	data.ContentLength = req.ContentLength
 	log.Println("ModifyRequest", data.URL)
-
+	if data.ContentLength == 0 {
+		data.Body = "[no data]"
+		runtime.EventsEmit(r.ctx, "Packet", data)
+		return nil
+	}
 	rb, _ := io.ReadAll(req.Body)
 	req.Body.Close()
 	req.Body = io.NopCloser(bytes.NewBuffer(rb))
@@ -67,9 +71,6 @@ func (r *RequestLogger) ModifyRequest(req *http.Request) error {
 
 // 从返回中获取 cookie
 func (r *RequestLogger) ModifyResponse(resp *http.Response) error {
-	if resp.Request.Method == "OPTIONS" || resp.Request.Method == "CONNECT" {
-		return nil
-	}
 	var data models.Packet
 	data.PacketType = models.RESPONSE
 	data.Date = time.Now().Format(time.DateTime)
@@ -81,18 +82,40 @@ func (r *RequestLogger) ModifyResponse(resp *http.Response) error {
 	data.Path = resp.Request.URL.Path
 	data.URL = resp.Request.URL.String()
 	data.Header = resp.Header
+	data.Status = resp.Status
+	data.StatusCode = resp.StatusCode
+	data.ContentType = resp.Header.Get("Content-Type")
 	data.ContentLength = resp.ContentLength
 
-	log.Println("ModifyResponse", data.URL)
+	if data.ContentLength == 0 {
+		data.Body = "[no data]"
+		runtime.EventsEmit(r.ctx, "Packet", data)
+		return nil
+	}
+	contentType := resp.Header.Get("Content-Type")
+	contentEncoding := resp.Header.Get("Content-Encoding")
+	log.Println("ModifyResponse", contentType, contentEncoding, data.URL)
+	if contentType == "" || (!strings.HasPrefix(contentType, "text/") && !strings.Contains(contentType, "json")) {
+		data.Body = "[binary data]" + contentType
+		runtime.EventsEmit(r.ctx, "Packet", data)
+		return nil
+	}
 
 	rb, _ := io.ReadAll(resp.Body)
 	resp.Body.Close()
 	resp.Body = io.NopCloser(bytes.NewBuffer(rb))
 
-	switch resp.Header.Get("Content-Encoding") {
+	switch contentEncoding {
+	case "zstd":
+		decompressdata, err := gozstd.Decompress(nil, rb)
+		if err != nil {
+			data.Body = err.Error()
+		} else {
+			data.Body = string(decompressdata)
+		}
 	case "gzip":
 		// 解压gzip数据
-		r, err := gzip.NewReader(bytes.NewBuffer(rb))
+		r, err := gzip.NewReader(bytes.NewReader(rb))
 		if err != nil {
 			data.Body = err.Error()
 		} else {
@@ -107,7 +130,7 @@ func (r *RequestLogger) ModifyResponse(resp *http.Response) error {
 			}
 		}
 	case "br":
-		r := brotli.NewReader(bytes.NewBuffer(rb))
+		r := brotli.NewReader(bytes.NewReader(rb))
 
 		// 读取解压后的数据
 		unzippedData, err := io.ReadAll(r)

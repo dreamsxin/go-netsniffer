@@ -1,15 +1,21 @@
 <script setup>
 import { EventsOn } from '../wailsjs/runtime/runtime'
-import { ref, reactive, useTemplateRef, watch, onMounted } from 'vue'
+import { ref, reactive, useTemplateRef, watch, onMounted, computed } from 'vue'
 import { ElNotification } from 'element-plus'
 import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test } from '../wailsjs/go/main/App'
 
 const data = reactive({
   config: {},
   resultText: "",
+  windowHeight: 0,
 })
 
+
+let mainheight = computed(() => data.windowHeight - 200)
+
 onMounted(() => {
+  
+  data.windowHeight = window.innerHeight;
   GetConfig().then(config => {
     data.config = config
   })
@@ -100,14 +106,38 @@ function uninstallCert() {
 
 
 function start() {
-  StartProxy(data.port, data.autoProxy).then(result => {
-    data.resultText = result
+  StartProxy(data.port, data.autoProxy).then(err => {
+    if (err == null) {
+      ElNotification({
+        title: 'Success',
+        message: "启动成功",
+        type: 'success',
+      })
+    } else {
+      ElNotification({
+        title: 'Error',
+        message: err.Message,
+        type: 'error',
+      })
+    }
   })
 }
 
 function stop() {
-  StopProxy().then(result => {
-    data.resultText = result
+  StopProxy().then(err => {
+    if (err == null) {
+      ElNotification({
+        title: 'Success',
+        message: "停止成功",
+        type: 'success',
+      })
+    } else {
+      ElNotification({
+        title: 'Error',
+        message: err.Message,
+        type: 'error',
+      })
+    }
   })
 }
 
@@ -140,44 +170,57 @@ function handleChange() {
 </script>
 
 <template>
-  <el-container>
-    <el-header>
-      <el-space>  
-      <el-button type="primary" round @click="installCert">安装证书</el-button>
-      <el-button type="success" round @click="generateCert">生成证书</el-button>
-      <el-button type="warning" round @click="uninstallCert">卸载证书</el-button>
-      <el-input-number v-model="data.config.Port" @change="handleChange" />
-      <el-switch v-model="data.config.AutoProxy" inline-prompt active-text="自动代理" inactive-text="自动代理"  @change="handleChange" />
-      <el-button-group>
-        <el-button type="primary" @click="start">启动服务</el-button>
-        <el-button type="warning" @click="stop">停止服务</el-button>
-        <el-button type="danger" @click="clear">清除数据</el-button>
-      </el-button-group>
-    </el-space>
+  <el-container height="100vh">
+    <el-header class="affix-container">
+      <el-affix :offset="10">
+        <el-backtop :right="10" :bottom="10" />
+        <el-space>
+          <el-button type="primary" round @click="installCert">安装证书</el-button>
+          <el-button type="success" round @click="generateCert">生成证书</el-button>
+          <el-button type="warning" round @click="uninstallCert">卸载证书</el-button>
+          <el-input-number v-model="data.config.Port" @change="handleChange" />
+          <el-switch v-model="data.config.AutoProxy" inline-prompt active-text="自动代理" inactive-text="自动代理"
+            @change="handleChange" />
+          <el-button-group>
+            <el-button type="primary" @click="start">启动服务</el-button>
+            <el-button type="warning" @click="stop">停止服务</el-button>
+            <el-button type="danger" @click="clear">清除数据</el-button>
+          </el-button-group>
+        </el-space>
+      </el-affix>
     </el-header>
     <el-main>
-      <div>{{ data.resultText }}</div>
-      <el-table :data="tableData" style="width: 100%">
+      <el-table :data="tableData" :height="mainheight">
         <el-table-column type="expand">
           <template #default="props">
             <div m="4">{{ props.row.Body }}
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="Date" prop="Date" sortable width="200" />
-        <el-table-column label="PacketType" prop="PacketType" width="150" />
-        <el-table-column label="Method" prop="Method" width="100" />
-        <el-table-column label="Host" prop="Host" width="200" />
-        <el-table-column label="Path" prop="Path" />
+        <el-table-column label="Date" prop="Date" sortable fixed width="180" />
+        <el-table-column label="PacketType" prop="PacketType" width="200" />
+        <el-table-column label="Method" prop="Method" width="200" />
+        <el-table-column label="Host" prop="Host" width="250" />
+        <el-table-column label="Path" prop="Path" width="250" />
+        <el-table-column label="ContentType" prop="ContentType" width="200" />
+        <el-table-column label="Status" prop="Status" width="200" />
+        <el-table-column label="StatusCode" prop="StatusCode" width="200" />
       </el-table>
     </el-main>
+    <el-footer>
+      <el-tabs v-model="activeName" type="border-card" class="demo-tabs" @tab-click="handleClick">
+        <el-tab-pane label="User" name="first">User</el-tab-pane>
+        <el-tab-pane label="Config" name="second">Config</el-tab-pane>
+        <el-tab-pane label="Role" name="third">Role</el-tab-pane>
+        <el-tab-pane label="Task" name="fourth">Task</el-tab-pane>
+      </el-tabs>
+    </el-footer>
   </el-container>
-  <el-footer>
-    <el-tabs v-model="activeName" type="border-card" class="demo-tabs" @tab-click="handleClick">
-      <el-tab-pane label="User" name="first">User</el-tab-pane>
-      <el-tab-pane label="Config" name="second">Config</el-tab-pane>
-      <el-tab-pane label="Role" name="third">Role</el-tab-pane>
-      <el-tab-pane label="Task" name="fourth">Task</el-tab-pane>
-    </el-tabs>
-  </el-footer>
 </template>
+<style scoped>
+.affix-container {
+  text-align: center;
+  border-radius: 4px;
+  background: var(--el-color-primary-light-9);
+}
+</style>

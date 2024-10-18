@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"sync"
 	"time"
 
 	"github.com/dreamsxin/go-netsniffer/events"
@@ -25,6 +26,7 @@ type App struct {
 	ctx    context.Context
 	config models.Config
 	serve  *martian.Proxy
+	lock   sync.Mutex
 }
 
 // NewApp creates a new App application struct
@@ -149,7 +151,8 @@ func (a *App) StartProxy() *events.Event {
 }
 
 func (a *App) StopProxy() *events.Event {
-
+	a.lock.Lock()
+	defer a.lock.Unlock()
 	if a.config.AutoProxy {
 		err := proxy.DisableProxy()
 		if err != nil {
@@ -160,6 +163,8 @@ func (a *App) StopProxy() *events.Event {
 		a.config.Status = 0
 		a.serve.Close()
 		a.serve = nil
+	} else {
+		return &events.Event{Type: events.ERROR, Code: 1, Message: "代理服务已经停止"}
 	}
 	return nil
 }
