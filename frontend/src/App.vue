@@ -33,6 +33,9 @@ EventsOn("Test", function (v) {
   data.resultText = v
 });
 
+const tableData = reactive([
+])
+
 EventsOn("Packet", function (v) {
   console.log("Packet", v)
   tableData.push(v)
@@ -108,15 +111,16 @@ function stop() {
   })
 }
 
+function clear() {
+  tableData.length = 0;
+}
+
 function test() {
   Test().then(result => {
     //data.resultText = result
     console.log(result)
   })
 }
-
-const tableData = reactive([
-])
 
 
 function handleChange() {
@@ -145,8 +149,9 @@ function handleChange() {
       <el-input-number v-model="data.config.Port" @change="handleChange" />
       <el-switch v-model="data.config.AutoProxy" inline-prompt active-text="自动代理" inactive-text="自动代理"  @change="handleChange" />
       <el-button-group>
-        <el-button type="primary" @click="start">Start Proxy</el-button>
-        <el-button type="warning" @click="stop">Stop Proxy</el-button>
+        <el-button type="primary" @click="start">启动服务</el-button>
+        <el-button type="warning" @click="stop">停止服务</el-button>
+        <el-button type="danger" @click="clear">清除数据</el-button>
       </el-button-group>
     </el-space>
     </el-header>
@@ -159,10 +164,11 @@ function handleChange() {
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="Date" prop="Date" sortable />
-        <el-table-column label="PacketType" prop="PacketType" />
-        <el-table-column label="Method" prop="Method" />
-        <el-table-column label="Url" prop="URL" />
+        <el-table-column label="Date" prop="Date" sortable width="200" />
+        <el-table-column label="PacketType" prop="PacketType" width="150" />
+        <el-table-column label="Method" prop="Method" width="100" />
+        <el-table-column label="Host" prop="Host" width="200" />
+        <el-table-column label="Path" prop="Path" />
       </el-table>
     </el-main>
   </el-container>

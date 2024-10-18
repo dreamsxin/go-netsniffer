@@ -46,12 +46,13 @@ func (r *RequestLogger) ModifyRequest(req *http.Request) error {
 	}
 	var data models.Packet
 	data.PacketType = models.REQUEST
-	data.Date = time.Now()
+	data.Date = time.Now().Format(time.DateTime)
 	data.Proto = req.Proto
 	data.ProtoMajor = req.ProtoMajor
 	data.ProtoMinor = req.ProtoMinor
 	data.Method = req.Method
 	data.Host = req.Host
+	data.Path = req.URL.Path
 	data.URL = req.URL.String()
 	data.Header = req.Header
 	log.Println("ModifyRequest", data.URL)
@@ -71,12 +72,13 @@ func (r *RequestLogger) ModifyResponse(resp *http.Response) error {
 	}
 	var data models.Packet
 	data.PacketType = models.RESPONSE
-	data.Date = time.Now()
+	data.Date = time.Now().Format(time.DateTime)
 	data.Proto = resp.Proto
 	data.ProtoMajor = resp.ProtoMajor
 	data.ProtoMinor = resp.ProtoMinor
 	data.Method = resp.Request.Method
 	data.Host = resp.Request.Host
+	data.Path = resp.Request.URL.Path
 	data.URL = resp.Request.URL.String()
 	data.Header = resp.Header
 	data.ContentLength = resp.ContentLength
@@ -92,16 +94,17 @@ func (r *RequestLogger) ModifyResponse(resp *http.Response) error {
 		// 解压gzip数据
 		r, err := gzip.NewReader(bytes.NewBuffer(rb))
 		if err != nil {
-			panic(err)
-		}
-		defer r.Close()
-
-		// 读取解压后的数据
-		unzippedData, err := io.ReadAll(r)
-		if err != nil {
 			data.Body = err.Error()
 		} else {
-			data.Body = string(unzippedData)
+			defer r.Close()
+
+			// 读取解压后的数据
+			unzippedData, err := io.ReadAll(r)
+			if err != nil {
+				data.Body = err.Error()
+			} else {
+				data.Body = string(unzippedData)
+			}
 		}
 	case "br":
 		r := brotli.NewReader(bytes.NewBuffer(rb))

@@ -22,6 +22,7 @@ export namespace events {
 export namespace models {
 	
 	export class Config {
+	    Status: number;
 	    Port: number;
 	    AutoProxy: boolean;
 	
@@ -31,6 +32,7 @@ export namespace models {
 	
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Status = source["Status"];
 	        this.Port = source["Port"];
 	        this.AutoProxy = source["AutoProxy"];
 	    }

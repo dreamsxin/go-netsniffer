@@ -14,12 +14,14 @@ const (
 
 type Packet struct {
 	PacketType    PacketType
-	Date          time.Time
+	Date          string
+	DateTime      time.Time
 	Proto         string // "HTTP/1.0"
 	ProtoMajor    int    // 1
 	ProtoMinor    int    // 0
 	Method        string
 	Host          string
+	Path          string
 	URL           string
 	Header        http.Header
 	Body          string

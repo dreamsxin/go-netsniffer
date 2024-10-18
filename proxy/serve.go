@@ -5,7 +5,6 @@ import (
 	"crypto/x509"
 	"encoding/pem"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"time"
@@ -26,11 +25,11 @@ const (
 	crtPath = "./rootcrt.pem"
 )
 
-func Serve(port int, authorityName string, handler ServeHandler) error {
+func New(authorityName string, handler ServeHandler) (*martian.Proxy, error) {
 
 	_, err := os.Stat(crtPath)
 	if err != nil {
-		return fmt.Errorf("请安装证书: %w", err)
+		return nil, fmt.Errorf("请安装证书: %w", err)
 	}
 
 	var crt *x509.Certificate
@@ -39,44 +38,44 @@ func Serve(port int, authorityName string, handler ServeHandler) error {
 	// 读取证书
 	pemBytes, err := os.ReadFile(keyPath)
 	if err != nil {
-		return fmt.Errorf("证书读取失败: %w", err)
+		return nil, fmt.Errorf("证书读取失败: %w", err)
 	}
 
 	block, _ := pem.Decode(pemBytes)
 	if block == nil {
-		return fmt.Errorf("证书读取失败: %w", err)
+		return nil, fmt.Errorf("证书读取失败: %w", err)
 	}
 	if block.Type == "RSA PRIVATE KEY" {
 		privKey, err = x509.ParsePKCS1PrivateKey(block.Bytes)
 		if err != nil {
-			return fmt.Errorf("私钥解析失败: %w", err)
+			return nil, fmt.Errorf("私钥解析失败: %w", err)
 		}
 	} else {
-		return fmt.Errorf("证书读取失败: Unsupported key type: %s", block.Type)
+		return nil, fmt.Errorf("证书读取失败: Unsupported key type: %s", block.Type)
 	}
 
 	pemBytes, err = os.ReadFile(crtPath)
 	if err != nil {
-		return fmt.Errorf("证书读取失败: %w", err)
+		return nil, fmt.Errorf("证书读取失败: %w", err)
 	}
 
 	block, _ = pem.Decode(pemBytes)
 	if block == nil {
-		return fmt.Errorf("证书读取失败: %w", err)
+		return nil, fmt.Errorf("证书读取失败: %w", err)
 	}
 	if block.Type == "CERTIFICATE" {
 		crt, err = x509.ParseCertificate(block.Bytes)
 		if err != nil {
-			return fmt.Errorf("证书读取失败: %w", err)
+			return nil, fmt.Errorf("证书读取失败: %w", err)
 		}
 	} else {
-		return fmt.Errorf("证书读取失败: Unsupported key type: %s", block.Type)
+		return nil, fmt.Errorf("证书读取失败: Unsupported key type: %s", block.Type)
 	}
 
 	mitmConf, err := mitm.NewConfig(crt, privKey)
 	mitmConf.SetOrganization(authorityName)
 	if err != nil {
-		return fmt.Errorf("初始化证书生成失败: %w", err)
+		return nil, fmt.Errorf("初始化证书生成失败: %w", err)
 	}
 
 	proxy := martian.NewProxy()
@@ -84,18 +83,7 @@ func Serve(port int, authorityName string, handler ServeHandler) error {
 	proxy.SetRequestModifier(handler)
 	proxy.SetResponseModifier(handler)
 
-	// listen proxy
-	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
-	if err != nil {
-		return fmt.Errorf("端口监听失败: %w", err)
-	}
-
-	fmt.Printf("Proxy listening on: %s", l.Addr().String())
-	if err := proxy.Serve(l); err != nil {
-		cert.UninstallCert(authorityName)
-		return fmt.Errorf("启动代理失败: %w", err)
-	}
-	return nil
+	return proxy, nil
 }
 
 func GenerateCert(authorityName string) error {
