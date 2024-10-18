@@ -13,12 +13,29 @@ const data = reactive({
 
 let mainheight = computed(() => data.windowHeight - 200)
 
+const getWindowInfo = () => {
+    data.windowHeight = window.innerHeight
+};
+
+const debounce = (fn, delay) => {
+	let timer;
+	return function() {
+		if (timer) {
+			clearTimeout(timer);
+		}
+		timer = setTimeout(() => {
+			fn();
+		}, delay);
+	}
+};
+
 onMounted(() => {
   
-  data.windowHeight = window.innerHeight;
+  getWindowInfo();
   GetConfig().then(config => {
     data.config = config
   })
+  window.addEventListener('resize', debounce(getWindowInfo, 500));// 监听窗口大小变化
 })
 
 const activeName = ref('first')
