@@ -5,7 +5,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/dreamsxin/go-netsniffer/cert"
+	"github.com/dreamsxin/go-netsniffer/events"
 	"github.com/dreamsxin/go-netsniffer/models"
 	"github.com/dreamsxin/go-netsniffer/proxy"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -49,21 +49,74 @@ func (a *App) SetConfig(config models.Config) {
 	log.Println("SetConfig", config)
 }
 
-// 从请求中获取 cookie
-func (a *App) StartProxy() error {
+func (a *App) GenerateCert() *events.Event {
+	err := proxy.GenerateCert(authorityName)
+	log.Println("GenerateCert", err)
+
+	if err != nil {
+		return &events.Event{Type: events.ERROR, Code: 1, Message: err.Error()}
+	}
+	return nil
+}
+
+func (a *App) InstallCert() *events.Event {
+	err := proxy.InstallCert(authorityName)
+	log.Println("InstallCert", err)
+	if err != nil {
+		return &events.Event{Type: events.ERROR, Code: 1, Message: err.Error()}
+	}
+	return nil
+}
+
+func (a *App) UninstallCert() *events.Event {
+	err := proxy.UninstallCert(authorityName)
+	log.Println("UninstallCert", err)
+	if err != nil {
+		return &events.Event{Type: events.ERROR, Code: 1, Message: err.Error()}
+	}
+	return nil
+}
+
+func (a *App) EnableProxy() *events.Event {
+	if err := proxy.EnableProxy(a.config.Port); err != nil { // todo do after serve
+
+		return &events.Event{Type: events.ERROR, Code: 1, Message: err.Error()}
+
+	}
+	return nil
+}
+
+func (a *App) DisableProxy() *events.Event {
+	if err := proxy.DisableProxy(); err != nil { // todo do after serve
+		return &events.Event{Type: events.ERROR, Code: 1, Message: err.Error()}
+	}
+	return nil
+}
+
+func (a *App) StartProxy() *events.Event {
 	// serve proxy
 	if a.config.AutoProxy {
 		if err := proxy.EnableProxy(a.config.Port); err != nil { // todo do after serve
-			return err
+			return &events.Event{Type: events.ERROR, Code: 1, Message: err.Error()}
 		}
 	}
-	return proxy.Serve(a.config.Port, authorityName, handler.NewRequestLogger(a.ctx))
+	go func() {
+		err := proxy.Serve(a.config.Port, authorityName, handler.NewRequestLogger(a.ctx))
+
+		if err != nil {
+			runtime.EventsEmit(a.ctx, events.EVENT_TYPE_ERROR, &events.Event{Type: events.ERROR, Code: 1, Message: err.Error()})
+		}
+
+	}()
+	return nil
 }
 
-func (a *App) StopProxy() error {
-	cert.UninstallCert(authorityName)
+func (a *App) StopProxy() *events.Event {
 	if a.config.AutoProxy {
-		proxy.DisableProxy()
+		err := proxy.DisableProxy()
+		if err != nil {
+			return &events.Event{Type: events.ERROR, Code: 1, Message: err.Error()}
+		}
 	}
 	return nil
 }

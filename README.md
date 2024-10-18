@@ -7,3 +7,9 @@
 ```shell
 wails dev
 ```
+
+## 构建
+
+```shell
+wails build
+```
