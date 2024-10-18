@@ -13,3 +13,15 @@ wails dev
 ```shell
 wails build
 ```
+
+## 发布
+
+```shell
+# choco install nsis
+wails build -nsis
+```
+
+## 截图
+
+
+![screenshot-1](https://github.com/dreamsxin/go-netsniffer/blob/main/screenshot/screenshot-01.png?raw=true))
