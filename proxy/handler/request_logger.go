@@ -21,11 +21,12 @@ const authorityName string = "Local Proxy Authority"
 
 // RequestLogger is a RequestModifier logs all request url
 type RequestLogger struct {
-	ctx context.Context
+	ctx      context.Context
+	sendChan chan<- *models.Packet
 }
 
-func NewRequestLogger(ctx context.Context) *RequestLogger {
-	return &RequestLogger{ctx: ctx}
+func NewRequestLogger(ctx context.Context, sendChan chan<- *models.Packet) *RequestLogger {
+	return &RequestLogger{ctx: ctx, sendChan: sendChan}
 }
 
 var regex *regexp.Regexp
@@ -65,7 +66,8 @@ func (r *RequestLogger) ModifyRequest(req *http.Request) error {
 	req.Body.Close()
 	req.Body = io.NopCloser(bytes.NewBuffer(rb))
 	data.Body = string(rb)
-	runtime.EventsEmit(r.ctx, "Packet", data)
+
+	r.sendChan <- &data
 	return nil
 }
 
@@ -144,6 +146,6 @@ func (r *RequestLogger) ModifyResponse(resp *http.Response) error {
 		data.Body = string(rb)
 	}
 
-	runtime.EventsEmit(r.ctx, "Packet", data)
+	r.sendChan <- &data
 	return nil
 }

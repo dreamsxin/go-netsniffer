@@ -4,6 +4,7 @@ type EventType int
 
 const (
 	GENERAL EventType = iota
+	NOTICE
 	ERROR
 )
 

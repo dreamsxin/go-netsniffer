@@ -13,7 +13,9 @@ export function GetConfig():Promise<models.Config>;
 
 export function InstallCert():Promise<events.Event>;
 
-export function SetConfig(arg1:models.Config):Promise<void>;
+export function RunLoop():Promise<void>;
+
+export function SetConfig(arg1:string,arg2:models.Config):Promise<void>;
 
 export function StartProxy():Promise<events.Event>;
 

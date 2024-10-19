@@ -178,9 +178,9 @@ function test() {
 }
 
 
-function handleChange() {
+function handleChange(field) {
 
-  SetConfig(data.config).then(result => {
+  SetConfig(field, data.config).then(result => {
     //data.resultText = result
     if (result == null) {
       ElNotification({
@@ -203,9 +203,9 @@ function handleChange() {
           <el-button type="primary" round @click="installCert">安装证书</el-button>
           <el-button type="success" round @click="generateCert">生成证书</el-button>
           <el-button type="warning" round @click="uninstallCert">卸载证书</el-button>
-          <el-input-number v-model="data.config.Port" @change="handleChange" />
+          <el-input-number v-model="data.config.Port" @change="handleChange('Port')" :controls="false" label="端口号" />
           <el-switch v-model="data.config.AutoProxy" inline-prompt active-text="自动代理" inactive-text="自动代理"
-            @change="handleChange" />
+            @change="handleChange('AutoProxy')" />
           <el-button-group>
             <el-button type="primary" @click="start">启动服务</el-button>
             <el-button type="warning" @click="stop">停止服务</el-button>
@@ -234,9 +234,14 @@ function handleChange() {
     </el-main>
     <el-footer ref="footer">
       <el-space>
-      <el-badge is-dot class="item">帮助</el-badge>
-      <el-rate v-model="data.rate" allow-half />
-    </el-space>
+        <el-badge is-dot class="item">帮助</el-badge>
+        <el-rate v-model="data.rate" allow-half />
+        <el-input v-model="data.config.FilterHost" style="max-width: 200px" placeholder="Please input" @change="handleChange('FilterHost')" >
+          <template #prepend>Host</template>
+        </el-input>
+        <el-switch v-model="data.config.SaveLogFile" inline-prompt active-text="保存到文件" inactive-text="保存到文件"
+          @change="handleChange('SaveLogFile')" />
+      </el-space>
     </el-footer>
   </el-container>
 </template>

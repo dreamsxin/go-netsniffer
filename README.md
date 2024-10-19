@@ -17,7 +17,8 @@ wails build
 ## 发布
 
 ```shell
-# choco install nsis
+#scoop bucket add extras
+#scoop install nsis
 wails build -nsis
 ```
 
