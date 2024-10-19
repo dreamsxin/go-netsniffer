@@ -59,13 +59,12 @@ func (r *RequestLogger) ModifyRequest(req *http.Request) error {
 	log.Println("ModifyRequest", data.URL)
 	if data.ContentLength == 0 {
 		data.Body = "[no data]"
-		runtime.EventsEmit(r.ctx, "Packet", data)
-		return nil
+	} else {
+		rb, _ := io.ReadAll(req.Body)
+		req.Body.Close()
+		req.Body = io.NopCloser(bytes.NewBuffer(rb))
+		data.Body = string(rb)
 	}
-	rb, _ := io.ReadAll(req.Body)
-	req.Body.Close()
-	req.Body = io.NopCloser(bytes.NewBuffer(rb))
-	data.Body = string(rb)
 
 	r.sendChan <- &data
 	return nil
@@ -91,37 +90,46 @@ func (r *RequestLogger) ModifyResponse(resp *http.Response) error {
 
 	if data.ContentLength == 0 {
 		data.Body = "[no data]"
-		runtime.EventsEmit(r.ctx, "Packet", data)
-		return nil
-	}
-	contentType := resp.Header.Get("Content-Type")
-	contentEncoding := resp.Header.Get("Content-Encoding")
-	log.Println("ModifyResponse", contentType, contentEncoding, data.URL)
-	if contentType == "" || (!strings.HasPrefix(contentType, "text/") && !strings.Contains(contentType, "json")) {
-		data.Body = "[binary data]" + contentType
-		runtime.EventsEmit(r.ctx, "Packet", data)
-		return nil
-	}
-
-	rb, _ := io.ReadAll(resp.Body)
-	resp.Body.Close()
-	resp.Body = io.NopCloser(bytes.NewBuffer(rb))
-
-	switch contentEncoding {
-	case "zstd":
-		decompressdata, err := gozstd.Decompress(nil, rb)
-		if err != nil {
-			data.Body = err.Error()
-		} else {
-			data.Body = string(decompressdata)
+	} else {
+		contentType := resp.Header.Get("Content-Type")
+		contentEncoding := resp.Header.Get("Content-Encoding")
+		log.Println("ModifyResponse", contentType, contentEncoding, data.URL)
+		if contentType == "" || (!strings.HasPrefix(contentType, "text/") && !strings.Contains(contentType, "json")) {
+			data.Body = "[binary data]" + contentType
+			runtime.EventsEmit(r.ctx, "Packet", data)
+			return nil
 		}
-	case "gzip":
-		// 解压gzip数据
-		r, err := gzip.NewReader(bytes.NewReader(rb))
-		if err != nil {
-			data.Body = err.Error()
-		} else {
-			defer r.Close()
+
+		rb, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		resp.Body = io.NopCloser(bytes.NewBuffer(rb))
+
+		switch contentEncoding {
+		case "zstd":
+			decompressdata, err := gozstd.Decompress(nil, rb)
+			if err != nil {
+				data.Body = err.Error()
+			} else {
+				data.Body = string(decompressdata)
+			}
+		case "gzip":
+			// 解压gzip数据
+			r, err := gzip.NewReader(bytes.NewReader(rb))
+			if err != nil {
+				data.Body = err.Error()
+			} else {
+				defer r.Close()
+
+				// 读取解压后的数据
+				unzippedData, err := io.ReadAll(r)
+				if err != nil {
+					data.Body = err.Error()
+				} else {
+					data.Body = string(unzippedData)
+				}
+			}
+		case "br":
+			r := brotli.NewReader(bytes.NewReader(rb))
 
 			// 读取解压后的数据
 			unzippedData, err := io.ReadAll(r)
@@ -130,20 +138,10 @@ func (r *RequestLogger) ModifyResponse(resp *http.Response) error {
 			} else {
 				data.Body = string(unzippedData)
 			}
-		}
-	case "br":
-		r := brotli.NewReader(bytes.NewReader(rb))
 
-		// 读取解压后的数据
-		unzippedData, err := io.ReadAll(r)
-		if err != nil {
-			data.Body = err.Error()
-		} else {
-			data.Body = string(unzippedData)
+		default:
+			data.Body = string(rb)
 		}
-
-	default:
-		data.Body = string(rb)
 	}
 
 	r.sendChan <- &data
