@@ -26,3 +26,4 @@ wails build -nsis
 
 
 ![screenshot-1](https://github.com/dreamsxin/go-netsniffer/blob/main/screenshot/screenshot-01.png?raw=true)
+![screenshot-2](https://github.com/dreamsxin/go-netsniffer/blob/main/screenshot/screenshot-02.png?raw=true)
