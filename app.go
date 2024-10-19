@@ -172,22 +172,11 @@ func (a *App) DisableProxy() *events.Event {
 
 // 启动代理服务
 func (a *App) StartProxy() *events.Event {
+	a.lock.Lock()
+	defer a.lock.Unlock()
 
 	if a.serve != nil {
 		return &events.Event{Type: events.ERROR, Code: 1, Message: "代理服务已经启动"}
-	}
-
-	// listen proxy
-	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", a.config.Port))
-	if err != nil {
-		return &events.Event{Type: events.ERROR, Code: 1, Message: err.Error()}
-	}
-
-	// serve proxy
-	if a.config.AutoProxy {
-		if err := proxy.EnableProxy(a.config.Port); err != nil { // todo do after serve
-			return &events.Event{Type: events.ERROR, Code: 1, Message: err.Error()}
-		}
 	}
 	serve, err := proxy.New(authorityName, handler.NewRequestLogger(a.ctx, a.dataChan))
 
@@ -195,8 +184,23 @@ func (a *App) StartProxy() *events.Event {
 		return &events.Event{Type: events.ERROR, Code: 1, Message: err.Error()}
 	} else {
 		a.serve = serve
-		a.config.Status = 1
 		go func() {
+
+			// listen proxy
+			l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", a.config.Port))
+			if err != nil {
+				runtime.EventsEmit(a.ctx, events.EVENT_TYPE_ERROR, &events.Event{Type: events.ERROR, Code: 1, Message: fmt.Sprintf("启动代理失败: %s", err.Error())})
+				return
+			}
+
+			// serve proxy
+			if a.config.AutoProxy {
+				if err := proxy.EnableProxy(a.config.Port); err != nil { // todo do after serve
+
+					runtime.EventsEmit(a.ctx, events.EVENT_TYPE_ERROR, &events.Event{Type: events.ERROR, Code: 1, Message: fmt.Sprintf("启动代理失败: %s", err.Error())})
+					return
+				}
+			}
 			fmt.Printf("Proxy listening on: %s", l.Addr().String())
 			if err := serve.Serve(l); err != nil {
 				a.serve = nil

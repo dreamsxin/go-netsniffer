@@ -1,4 +1,6 @@
 import { createApp } from 'vue'
+import Vue3EasyDataTable from 'vue3-easy-data-table';
+import 'vue3-easy-data-table/dist/style.css';
 import ElementPlus from 'element-plus'
 import {
   HomeFilled,
@@ -13,4 +15,4 @@ import App from './App.vue'
 import './style.css';
 
 
-createApp(App).use(ElementPlus).mount('#app')
+createApp(App).component('EasyDataTable', Vue3EasyDataTable).use(ElementPlus).mount('#app')

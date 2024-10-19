@@ -24,6 +24,4 @@ wails build -nsis
 
 ## 截图
 
-
-![screenshot-1](https://github.com/dreamsxin/go-netsniffer/blob/main/screenshot/screenshot-01.png?raw=true)
-![screenshot-2](https://github.com/dreamsxin/go-netsniffer/blob/main/screenshot/screenshot-02.png?raw=true)
+![screenshot-3](https://github.com/dreamsxin/go-netsniffer/blob/main/screenshot/screenshot-03.png?raw=true)

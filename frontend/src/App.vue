@@ -10,6 +10,7 @@ const footer = useTemplateRef('footer')
 const data = reactive({
   config: {},
   resultText: "",
+  windowWidth: 1024,
   windowHeight: 768,
   headerheight: 100,
   ftooerheight: 100,
@@ -19,7 +20,9 @@ const data = reactive({
 let mainheight = computed(() => data.windowHeight - data.headerheight - data.ftooerheight - 40)
 
 const getWindowInfo = () => {
+  data.windowWidth = window.innerWidth
   data.windowHeight = window.innerHeight
+  console.log("mainheight", mainheight.value, data.windowHeight - data.headerheight - data.ftooerheight - 40, data.windowHeight, data.headerheight, data.ftooerheight)
 };
 
 const debounce = (fn, delay) => {
@@ -37,13 +40,12 @@ const debounce = (fn, delay) => {
 onMounted(() => {
   data.headerheight = header.value?.$el.offsetHeight
   data.ftooerheight = footer.value?.$el.offsetHeight
-  console.log("onMounted", data.headerheight, data.ftooerheight)
 
   getWindowInfo();
   GetConfig().then(config => {
     data.config = config
   })
-  window.addEventListener('resize', debounce(getWindowInfo, 100));// 监听窗口大小变化
+  window.addEventListener('resize', debounce(getWindowInfo, 200));// 监听窗口大小变化
 })
 
 const activeName = ref('first')
@@ -192,6 +194,19 @@ function handleChange(field) {
   })
 }
 
+function showDetail(row, column, event) {
+  console.log(row, column, event)
+}
+
+const headers = [
+  { value: 'Date', text: '日期', width: 160, fixed: true },
+  { value: 'PacketType', text: '类型', width: 80, fixed: true },
+  { value: 'Method', text: '方式', width: 100, fixed: true },
+  { value: 'Host', text: '域名', width: 250 },
+  { value: 'Path', text: '地址', width: 250 },
+  { value: 'ContentType', text: '内容类型', width: 200 },
+  { value: 'StatusCode', text: '状态', width: 200 }
+];
 </script>
 
 <template>
@@ -215,37 +230,35 @@ function handleChange(field) {
       </el-affix>
     </el-header>
     <el-main>
-      <el-table :data="tableData" :height="mainheight">
-        <el-table-column type="expand">
-          <template #default="props">
-            <div m="4">{{ props.row.Body }}
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column label="Date" prop="Date" sortable fixed width="180" />
-        <el-table-column label="PacketType" prop="PacketType" width="200" />
-        <el-table-column label="Method" prop="Method" width="200" />
-        <el-table-column label="Host" prop="Host" width="250" />
-        <el-table-column label="Path" prop="Path" width="250" />
-        <el-table-column label="ContentType" prop="ContentType" width="200" />
-        <el-table-column label="Status" prop="Status" width="200" />
-        <el-table-column label="StatusCode" prop="StatusCode" width="200" />
-      </el-table>
+      <EasyDataTable :headers="headers" :items="tableData" :table-height="mainheight">
+        <template #expand="item">
+          <div style="padding: 15px">
+            <span v-for="(item, index) in item.Header">
+              <p>{{ index }}: {{ item.join(",") }}</p>
+            </span>
+            <pre>{{ item.Body }}</pre>
+          </div>
+        </template>
+      </EasyDataTable>
     </el-main>
-    <el-footer ref="footer">
+    <el-footer ref="footer" height="50">
       <el-space>
         <el-badge is-dot class="item">帮助</el-badge>
-        <el-rate v-model="data.rate" allow-half />
-        <el-input v-model="data.config.FilterHost" style="max-width: 200px" placeholder="Please input" @change="handleChange('FilterHost')" >
+        <el-rate v-model="data.rate" allow-half class="item" />
+        <el-input v-model="data.config.FilterHost" style="max-width: 200px" placeholder="Please input"
+          @change="handleChange('FilterHost')" class="item">
           <template #prepend>Host</template>
         </el-input>
         <el-switch v-model="data.config.SaveLogFile" inline-prompt active-text="保存到文件" inactive-text="保存到文件"
-          @change="handleChange('SaveLogFile')" />
+          @change="handleChange('SaveLogFile')" class="item" />
       </el-space>
     </el-footer>
   </el-container>
 </template>
 <style scoped>
+ .el-main{ padding:0!important; }
+ .el-footer{ padding-top:5px; }
+
 .affix-container {
   text-align: center;
   border-radius: 4px;
@@ -253,7 +266,6 @@ function handleChange(field) {
 }
 
 .item {
-  margin-top: 10px;
   margin-right: 40px;
 }
 </style>
