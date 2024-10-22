@@ -46,8 +46,16 @@ export function StartProxy() {
   return window['go']['main']['App']['StartProxy']();
 }
 
+export function StartTCPCapture(arg1) {
+  return window['go']['main']['App']['StartTCPCapture'](arg1);
+}
+
 export function StopProxy() {
   return window['go']['main']['App']['StopProxy']();
+}
+
+export function StopTCPCapture() {
+  return window['go']['main']['App']['StopTCPCapture']();
 }
 
 export function Test() {

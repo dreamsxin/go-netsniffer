@@ -5,7 +5,10 @@ import { ElNotification } from 'element-plus'
 import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices } from '../wailsjs/go/main/App'
 
 const data = reactive({
-  config: {},
+  config: {
+    HTTP: {},
+    TCP: {},
+  },
   resultText: "",
   windowWidth: 1024,
   windowHeight: 768,
@@ -70,6 +73,10 @@ const tableData = reactive([
 
 EventsOn("Packet", function (v) {
   console.log("Packet", v)
+});
+
+EventsOn("HTTPPacket", function (v) {
+  console.log("HTTPPacket", v)
   tableData.push(v)
 });
 
@@ -204,7 +211,7 @@ function showDetail(row, column, event) {
 
 const headers = [
   { value: 'Date', text: '日期', width: 160, fixed: true },
-  { value: 'PacketType', text: '类型', width: 80, fixed: true },
+  { value: 'HTTPPacketType', text: '类型', width: 80, fixed: true },
   { value: 'Method', text: '方式', width: 100, fixed: true },
   { value: 'Host', text: '域名', width: 250 },
   { value: 'Path', text: '地址', width: 250 },
@@ -233,13 +240,14 @@ const headers = [
       <el-row style="margin-bottom:5px">
         <el-col>
           <el-space wrap>
-            <el-input-number v-model="data.config.Port" @change="handleChange('Port')" :controls="false" label="端口号" />
-            <el-switch v-model="data.config.AutoProxy" inline-prompt active-text="自动代理" inactive-text="自动代理"
-              @change="handleChange('AutoProxy')" />
-            <el-switch v-model="data.config.SaveLogFile" inline-prompt active-text="保存到文件" inactive-text="保存到文件"
-              @change="handleChange('SaveLogFile')" class="item" />
-            <el-input v-model="data.config.FilterHost" style="max-width: 200px" placeholder="Please input"
-              @change="handleChange('FilterHost')" class="item">
+            <el-text>端口号</el-text><el-input-number v-model="data.config.HTTP.Port" @change="handleChange('HTTP.Port')"
+              :controls="false" aria-label="端口号" />
+            <el-switch v-model="data.config.HTTP.AutoProxy" inline-prompt active-text="自动代理" inactive-text="自动代理"
+              @change="handleChange('HTTP.AutoProxy')" />
+            <el-switch v-model="data.config.HTTP.SaveLogFile" inline-prompt active-text="保存到文件" inactive-text="保存到文件"
+              @change="handleChange('HTTP.SaveLogFile')" class="item" />
+            <el-input v-model="data.config.HTTP.FilterHost" style="max-width: 200px" placeholder="Please input"
+              @change="handleChange('HTTP.FilterHost')" class="item">
               <template #prepend>Host</template>
             </el-input>
           </el-space>
@@ -270,6 +278,20 @@ const headers = [
       <el-row style="margin-bottom:5px">
         <el-col>
           <el-space wrap>
+            <el-input-number v-model="data.config.TCP.Snaplen"
+              @change="handleChange('TCP.Snaplen')" :controls="false" aria-label="数据包长度">
+              <template #prefix>
+                <span>数据包长度</span>
+              </template>
+            </el-input-number>
+            <el-text>超时时间</el-text><el-input-number v-model="data.config.TCP.Timeout"
+              @change="handleChange('TCP.Timeout')" :controls="false" aria-label="超时时间">
+              <template #suffix>
+                <span>毫秒</span>
+              </template>
+            </el-input-number>
+            <el-switch v-model="data.config.TCP.Promisc" inline-prompt active-text="混杂模式" inactive-text="混杂模式"
+              @change="handleChange('TCP.Promisc')" />
           </el-space>
         </el-col>
       </el-row>

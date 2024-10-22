@@ -25,7 +25,11 @@ export function SetConfig(arg1:string,arg2:models.Config):Promise<void>;
 
 export function StartProxy():Promise<events.Event>;
 
+export function StartTCPCapture(arg1:string):Promise<void>;
+
 export function StopProxy():Promise<events.Event>;
+
+export function StopTCPCapture():Promise<void>;
 
 export function Test():Promise<string>;
 
