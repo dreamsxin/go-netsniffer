@@ -68,4 +68,7 @@ type IPPacket struct {
 	// TCP/UDP
 	SrcPort uint16 `json:"SrcPort,omitempty"`
 	DstPort uint16 `json:"DstPort,omitempty"`
+	// Application
+	ApplicationLayer string `json:"ApplicationLayer,omitempty"`
+	Payload          string `json:"Payload,omitempty"`
 }

@@ -2,12 +2,12 @@
 import { EventsOn } from '../wailsjs/runtime/runtime'
 import { ref, reactive, useTemplateRef, watch, onMounted, computed } from 'vue'
 import { ElNotification } from 'element-plus'
-import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartTCPCapture, StopTCPCapture } from '../wailsjs/go/main/App'
+import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture } from '../wailsjs/go/main/App'
 
 const data = reactive({
   config: {
     HTTP: {},
-    TCP: {},
+    IP: {},
   },
   resultText: "",
   windowWidth: 1024,
@@ -47,11 +47,11 @@ onMounted(() => {
   window.addEventListener('resize', debounce(getWindowInfo, 200));// 监听窗口大小变化
 })
 
-const activeName = ref('http')
+const activeName = ref('HTTP')
 
 const handleTabChange = (tab, event) => {
   console.log(activeName.value, tab, event)
-  if (activeName.value == "tcp") {
+  if (activeName.value == "IP") {
     getDevices()
   }
 }
@@ -234,8 +234,8 @@ function handleChange(field) {
   })
 }
 
-function startTCPCapture() {
-  StartTCPCapture(data.selectdevice).then(err => {
+function startIPCapture() {
+  StartIPCapture(data.selectdevice).then(err => {
     if (err == null) {
       ElNotification({
         title: 'Success',
@@ -252,8 +252,8 @@ function startTCPCapture() {
   })
 }
 
-function stopTCPCapture() {
-  StopTCPCapture().then(err => {
+function stopIPCapture() {
+  StopIPCapture().then(err => {
     if (err == null) {
       ElNotification({
         title: 'Success',
@@ -273,7 +273,7 @@ function stopTCPCapture() {
 
 <template>
   <el-tabs type="border-card" v-model="activeName" height="100vh" @tab-change="handleTabChange">
-    <el-tab-pane label="HTTP" name="http">
+    <el-tab-pane label="HTTP" name="HTTP">
       <el-row style="margin-bottom:5px">
         <el-col>
           <el-space wrap>
@@ -315,7 +315,7 @@ function stopTCPCapture() {
         </template>
       </EasyDataTable>
     </el-tab-pane>
-    <el-tab-pane label="TCP" name="tcp">
+    <el-tab-pane label="IP" name="IP">
       <el-row style="margin-bottom:5px" :gutter="10">
         <el-col :span="6">
           <el-select v-model="data.selectdevice" placeholder="选择设备" clearable>
@@ -326,8 +326,8 @@ function stopTCPCapture() {
           <el-space wrap>
             <el-button type="primary" round @click="getDevices">获取</el-button>
             <el-button-group>
-              <el-button type="primary" @click="startTCPCapture">启动服务</el-button>
-              <el-button type="warning" @click="stopTCPCapture">停止服务</el-button>
+              <el-button type="primary" @click="startIPCapture">启动服务</el-button>
+              <el-button type="warning" @click="stopIPCapture">停止服务</el-button>
             </el-button-group>
           </el-space>
         </el-col>
@@ -335,30 +335,31 @@ function stopTCPCapture() {
       <el-row style="margin-bottom:5px">
         <el-col>
           <el-space wrap>
-            <el-input-number v-model="data.config.TCP.Snaplen" @change="handleChange('TCP.Snaplen')" :controls="false"
+            <el-input v-model="data.config.IP.Filter" @change="handleChange('IP.Filter')" style="max-width: 600px" placeholder="请输入过滤条件">
+              <template #prepend>过滤条件</template>
+            </el-input>
+            <el-input-number v-model="data.config.IP.Snaplen" @change="handleChange('IP.Snaplen')" :controls="false"
               aria-label="数据包长度">
               <template #prefix>
                 <span>数据包长度</span>
               </template>
             </el-input-number>
-            <el-text>超时时间</el-text><el-input-number v-model="data.config.TCP.Timeout"
-              @change="handleChange('TCP.Timeout')" :controls="false" aria-label="超时时间">
+            <el-text>超时时间</el-text><el-input-number v-model="data.config.IP.Timeout"
+              @change="handleChange('IP.Timeout')" :controls="false" aria-label="超时时间">
               <template #suffix>
                 <span>毫秒</span>
               </template>
             </el-input-number>
-            <el-switch v-model="data.config.TCP.Promisc" inline-prompt active-text="混杂模式" inactive-text="混杂模式"
-              @change="handleChange('TCP.Promisc')" />
+            <el-switch v-model="data.config.IP.Promisc" inline-prompt active-text="混杂模式" inactive-text="混杂模式"
+              @change="handleChange('IP.Promisc')" />
           </el-space>
         </el-col>
       </el-row>
       <EasyDataTable :headers="tcpheaders" :items="tcpTableData" :table-height="httpheight">
         <template #expand="item">
           <div style="padding: 15px">
-            <span v-for="(item, index) in item.Header" v-bind:key="index">
-              <p>{{ index }}: {{ item.join(",") }}</p>
-            </span>
-            <pre>{{ item.Body }}</pre>
+            <p>LayerType: {{ item.ApplicationLayer }}</p>
+            <pre>{{ item.Payload }}</pre>
           </div>
         </template>
       </EasyDataTable>

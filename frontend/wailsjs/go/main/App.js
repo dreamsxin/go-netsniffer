@@ -42,20 +42,20 @@ export function SetConfig(arg1, arg2) {
   return window['go']['main']['App']['SetConfig'](arg1, arg2);
 }
 
+export function StartIPCapture(arg1) {
+  return window['go']['main']['App']['StartIPCapture'](arg1);
+}
+
 export function StartProxy() {
   return window['go']['main']['App']['StartProxy']();
 }
 
-export function StartTCPCapture(arg1) {
-  return window['go']['main']['App']['StartTCPCapture'](arg1);
+export function StopIPCapture() {
+  return window['go']['main']['App']['StopIPCapture']();
 }
 
 export function StopProxy() {
   return window['go']['main']['App']['StopProxy']();
-}
-
-export function StopTCPCapture() {
-  return window['go']['main']['App']['StopTCPCapture']();
 }
 
 export function Test() {

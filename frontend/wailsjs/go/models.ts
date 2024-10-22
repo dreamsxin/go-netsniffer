@@ -39,15 +39,16 @@ export namespace models {
 	        this.P2P = source["P2P"];
 	    }
 	}
-	export class TCP {
+	export class IP {
 	    Status: number;
 	    Device: string;
 	    Snaplen: number;
 	    Promisc: boolean;
 	    Timeout: number;
+	    Filter: string;
 	
 	    static createFrom(source: any = {}) {
-	        return new TCP(source);
+	        return new IP(source);
 	    }
 	
 	    constructor(source: any = {}) {
@@ -57,6 +58,7 @@ export namespace models {
 	        this.Snaplen = source["Snaplen"];
 	        this.Promisc = source["Promisc"];
 	        this.Timeout = source["Timeout"];
+	        this.Filter = source["Filter"];
 	    }
 	}
 	export class HTTP {
@@ -83,7 +85,7 @@ export namespace models {
 	}
 	export class Config {
 	    HTTP: HTTP;
-	    TCP: TCP;
+	    IP: IP;
 	
 	    static createFrom(source: any = {}) {
 	        return new Config(source);
@@ -92,7 +94,7 @@ export namespace models {
 	    constructor(source: any = {}) {
 	        if ('string' === typeof source) source = JSON.parse(source);
 	        this.HTTP = this.convertValues(source["HTTP"], HTTP);
-	        this.TCP = this.convertValues(source["TCP"], TCP);
+	        this.IP = this.convertValues(source["IP"], IP);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

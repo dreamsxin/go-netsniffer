@@ -47,10 +47,11 @@ func NewApp() *App {
 				AutoProxy:   true,
 				SaveLogFile: false,
 			},
-			TCP: models.TCP{
+			IP: models.IP{
 				Snaplen: 1024,
 				Promisc: true,
 				Timeout: 1000,
+				Filter:  "tcp and port 80",
 			},
 		},
 		dataChan: make(chan *models.Packet, 1000),
@@ -114,7 +115,7 @@ func (a *App) startup(ctx context.Context) {
 
 func (a *App) shutdown(ctx context.Context) {
 	a.StopProxy()
-	a.StopTCPCapture()
+	a.StopIPCapture()
 	close(a.dataChan)
 	a.dataChan = nil
 	b, err := json.Marshal(a.config)
@@ -291,16 +292,23 @@ func (a *App) GetDevices() (data []models.Device) {
 	return
 }
 
-func (a *App) StartTCPCapture(device string) {
+func (a *App) StartIPCapture(device string) {
+	log.Println("StartIPCapture", device)
 	a.lock.Lock()
 	defer a.lock.Unlock()
-	a.config.TCP.Device = device
-	handle, err := pcap.OpenLive(a.config.TCP.Device, a.config.TCP.Snaplen, a.config.TCP.Promisc, time.Duration(a.config.TCP.Timeout)*time.Millisecond)
+	a.config.IP.Device = device
+	handle, err := pcap.OpenLive(a.config.IP.Device, a.config.IP.Snaplen, a.config.IP.Promisc, time.Duration(a.config.IP.Timeout)*time.Millisecond)
 	if err != nil {
 		a.FireErrorEvent(2, fmt.Sprintf("数据抓包开启失败: %s", err.Error()))
 		return
 	}
-	a.config.TCP.Status = 1
+	err = handle.SetBPFFilter(a.config.IP.Filter)
+	if err != nil {
+		handle.Close()
+		a.FireErrorEvent(2, fmt.Sprintf("数据过滤条件设置失败: %s", err.Error()))
+		return
+	}
+	a.config.IP.Status = 1
 	a.tcphandle = handle
 	// Use the handle as a packet source to process all packets
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
@@ -313,15 +321,16 @@ func (a *App) StartTCPCapture(device string) {
 				IP:         data,
 			}
 		}
-		a.config.TCP.Status = 0
+		a.config.IP.Status = 0
 	}()
 }
 
-func (a *App) StopTCPCapture() *events.Event {
+func (a *App) StopIPCapture() *events.Event {
+	log.Println("StopIPCapture")
 	a.lock.Lock()
 	defer a.lock.Unlock()
 	if a.tcphandle != nil {
-		a.config.TCP.Status = 0
+		a.config.IP.Status = 0
 		a.tcphandle.Close()
 		a.tcphandle = nil
 		return nil
@@ -413,6 +422,22 @@ func printPacketInfo(packet gopacket.Packet) models.IPPacket {
 			data.DstPort = uint16(udp.DstPort)
 		}
 	}
+
+	// When iterating through packet.Layers() above,
+	// if it lists Payload layer then that is the same as
+	// this applicationLayer. applicationLayer contains the payload
+	applicationLayer := packet.ApplicationLayer()
+	if applicationLayer != nil {
+		fmt.Println("Application layer/Payload found.")
+		fmt.Printf("%s\n", applicationLayer.Payload())
+		// Search for a string inside the payload
+		data.ApplicationLayer = applicationLayer.LayerType().String()
+		data.Payload = string(applicationLayer.Payload())
+		if strings.Contains(data.Payload, "HTTP") {
+			fmt.Println("HTTP found!")
+		}
+	}
+
 	// Iterate over all layers, printing out each layer type
 	fmt.Println("All packet layers:")
 	for _, layer := range packet.Layers() {
