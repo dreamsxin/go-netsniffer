@@ -20,6 +20,7 @@ import (
 	//"net/http/cookiejar"
 
 	"github.com/dreamsxin/go-netsniffer/proxy/handler"
+	"github.com/google/gopacket/pcap"
 )
 
 const authorityName string = "GoNetSniffer Proxy Authority"
@@ -106,6 +107,16 @@ func (a *App) shutdown(ctx context.Context) {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func (a *App) FireEvent(code int, msg string) {
+
+	runtime.EventsEmit(a.ctx, events.EVENT_TYPE_RESPONSE, &events.Event{Type: events.GENERAL, Code: code, Message: msg})
+}
+
+func (a *App) FireErrorEvent(code int, msg string) {
+	log.Println("FireErrorEvent", code, msg)
+	runtime.EventsEmit(a.ctx, events.EVENT_TYPE_ERROR, &events.Event{Type: events.ERROR, Code: code, Message: msg})
 }
 
 func (a *App) GetConfig() models.Config {
@@ -237,4 +248,26 @@ func (a *App) Test() string {
 	runtime.EventsEmit(a.ctx, "Test", time.Now().String())
 
 	return "test"
+}
+
+func (a *App) GetDevices() (data []models.Device) {
+
+	devices, err := pcap.FindAllDevs()
+	if err != nil {
+		a.FireErrorEvent(2, fmt.Sprintf("获取设备失败: %s", err.Error()))
+		return
+	}
+
+	for _, d := range devices {
+		fmt.Println("\nName: ", d.Name)
+		fmt.Println("Description: ", d.Description)
+		fmt.Println("Devices addresses: ", d.Addresses)
+
+		addresses := []models.Address{}
+		for _, address := range d.Addresses {
+			addresses = append(addresses, models.Address{IP: address.IP.String(), Netmask: address.Netmask.String()})
+		}
+		data = append(data, models.Device{Name: d.Name, Description: d.Description, Addresses: addresses})
+	}
+	return
 }

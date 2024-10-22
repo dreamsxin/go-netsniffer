@@ -7,9 +7,15 @@ export function DisableProxy():Promise<events.Event>;
 
 export function EnableProxy():Promise<events.Event>;
 
+export function FireErrorEvent(arg1:number,arg2:string):Promise<void>;
+
+export function FireEvent(arg1:number,arg2:string):Promise<void>;
+
 export function GenerateCert():Promise<events.Event>;
 
 export function GetConfig():Promise<models.Config>;
+
+export function GetDevices():Promise<Array<models.Device>>;
 
 export function InstallCert():Promise<events.Event>;
 

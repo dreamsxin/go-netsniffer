@@ -10,12 +10,24 @@ export function EnableProxy() {
   return window['go']['main']['App']['EnableProxy']();
 }
 
+export function FireErrorEvent(arg1, arg2) {
+  return window['go']['main']['App']['FireErrorEvent'](arg1, arg2);
+}
+
+export function FireEvent(arg1, arg2) {
+  return window['go']['main']['App']['FireEvent'](arg1, arg2);
+}
+
 export function GenerateCert() {
   return window['go']['main']['App']['GenerateCert']();
 }
 
 export function GetConfig() {
   return window['go']['main']['App']['GetConfig']();
+}
+
+export function GetDevices() {
+  return window['go']['main']['App']['GetDevices']();
 }
 
 export function InstallCert() {

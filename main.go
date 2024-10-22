@@ -27,9 +27,9 @@ func main() {
 
 	// Create application with options
 	err := wails.Run(&options.App{
-		Title:  "Go NetSniffer",
-		Width:  1024,
-		Height: 768,
+		Title:     "Go NetSniffer",
+		MinWidth:  1024,
+		MinHeight: 768,
 		AssetServer: &assetserver.Options{
 			Assets: assets,
 		},
