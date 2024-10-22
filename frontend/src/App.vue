@@ -44,10 +44,13 @@ onMounted(() => {
   window.addEventListener('resize', debounce(getWindowInfo, 200));// 监听窗口大小变化
 })
 
-const activeName = ref('first')
+const activeName = ref('http')
 
-const handleClick = (tab, event) => {
-  console.log(tab, event)
+const handleTabChange = (tab, event) => {
+  console.log(activeName, tab, event)
+  if (activeName.value == "tcp") {
+    getDevices()
+  }
 }
 
 EventsOn("error", function (v) {
@@ -211,8 +214,8 @@ const headers = [
 </script>
 
 <template>
-  <el-tabs type="border-card" height="100vh">
-    <el-tab-pane label="HTTP">
+  <el-tabs type="border-card" v-model="activeName" height="100vh" @tab-change="handleTabChange">
+    <el-tab-pane label="HTTP" name="http">
       <el-row style="margin-bottom:5px">
         <el-col>
           <el-space wrap>
@@ -253,8 +256,8 @@ const headers = [
         </template>
       </EasyDataTable>
     </el-tab-pane>
-    <el-tab-pane label="TCP">
-      <el-row style="margin-bottom:5px" gutter="10">
+    <el-tab-pane label="TCP" name="tcp">
+      <el-row style="margin-bottom:5px" :gutter="10">
         <el-col :span="6">
           <el-select v-model="data.selectdevice" placeholder="选择设备" clearable>
             <el-option v-for="item in data.devices" :key="item.Name" :label="item.Description" :value="item.Name" />
