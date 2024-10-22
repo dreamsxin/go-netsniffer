@@ -2,7 +2,7 @@
 import { EventsOn } from '../wailsjs/runtime/runtime'
 import { ref, reactive, useTemplateRef, watch, onMounted, computed } from 'vue'
 import { ElNotification } from 'element-plus'
-import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices } from '../wailsjs/go/main/App'
+import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartTCPCapture, StopTCPCapture } from '../wailsjs/go/main/App'
 
 const data = reactive({
   config: {
@@ -50,7 +50,7 @@ onMounted(() => {
 const activeName = ref('http')
 
 const handleTabChange = (tab, event) => {
-  console.log(activeName, tab, event)
+  console.log(activeName.value, tab, event)
   if (activeName.value == "tcp") {
     getDevices()
   }
@@ -68,16 +68,45 @@ EventsOn("Test", function (v) {
   data.resultText = v
 });
 
-const tableData = reactive([
-])
 
 EventsOn("Packet", function (v) {
   console.log("Packet", v)
 });
 
+
+
+const httpheaders = [
+  { value: 'Date', text: '日期', width: 160, fixed: true },
+  { value: 'HTTPPacketType', text: '类型', width: 80, fixed: true },
+  { value: 'Method', text: '方式', width: 100, fixed: true },
+  { value: 'Host', text: '域名', width: 250 },
+  { value: 'Path', text: '地址', width: 250 },
+  { value: 'ContentType', text: '内容类型', width: 200 },
+  { value: 'StatusCode', text: '状态', width: 200 }
+];
+const httpTableData = reactive([
+])
 EventsOn("HTTPPacket", function (v) {
   console.log("HTTPPacket", v)
-  tableData.push(v)
+  httpTableData.push(v)
+});
+
+const tcpheaders = [
+  { value: 'Date', text: '日期', width: 160, fixed: true },
+  { value: 'LayerType', text: '网络层', width: 80, fixed: true },
+  { value: 'SrcMAC', text: 'SrcMAC', width: 100, },
+  { value: 'DstMAC', text: 'DstMAC', width: 100 },
+  { value: 'SrcIP', text: 'SrcMAC', width: 100, },
+  { value: 'DstIP', text: 'DstMAC', width: 100 },
+  { value: 'Protocol', text: '协议', width: 100 },
+  { value: 'SrcPort', text: 'SrcPort', width: 100 },
+  { value: 'DstPort', text: 'DstPort', width: 100 },
+];
+const tcpTableData = reactive([
+])
+EventsOn("TCPPacket", function (v) {
+  console.log("TCPPacket", v)
+  tcpTableData.push(v)
 });
 
 
@@ -143,7 +172,7 @@ function getDevices() {
   })
 }
 
-function start() {
+function startProxy() {
   StartProxy(data.port, data.autoProxy).then(err => {
     if (err == null) {
       ElNotification({
@@ -161,7 +190,7 @@ function start() {
   })
 }
 
-function stop() {
+function stopProxy() {
   StopProxy().then(err => {
     if (err == null) {
       ElNotification({
@@ -180,7 +209,7 @@ function stop() {
 }
 
 function clear() {
-  tableData.length = 0;
+  httpTableData.length = 0;
 }
 
 function test() {
@@ -205,19 +234,41 @@ function handleChange(field) {
   })
 }
 
-function showDetail(row, column, event) {
-  console.log(row, column, event)
+function startTCPCapture() {
+  StartTCPCapture(data.selectdevice).then(err => {
+    if (err == null) {
+      ElNotification({
+        title: 'Success',
+        message: "启动成功",
+        type: 'success',
+      })
+    } else {
+      ElNotification({
+        title: 'Error',
+        message: err.Message,
+        type: 'error',
+      })
+    }
+  })
 }
 
-const headers = [
-  { value: 'Date', text: '日期', width: 160, fixed: true },
-  { value: 'HTTPPacketType', text: '类型', width: 80, fixed: true },
-  { value: 'Method', text: '方式', width: 100, fixed: true },
-  { value: 'Host', text: '域名', width: 250 },
-  { value: 'Path', text: '地址', width: 250 },
-  { value: 'ContentType', text: '内容类型', width: 200 },
-  { value: 'StatusCode', text: '状态', width: 200 }
-];
+function stopTCPCapture() {
+  StopTCPCapture().then(err => {
+    if (err == null) {
+      ElNotification({
+        title: 'Success',
+        message: "停止成功",
+        type: 'success',
+      })
+    } else {
+      ElNotification({
+        title: 'Error',
+        message: err.Message,
+        type: 'error',
+      })
+    }
+  })
+}
 </script>
 
 <template>
@@ -230,8 +281,8 @@ const headers = [
             <el-button type="success" round @click="generateCert">生成证书</el-button>
             <el-button type="warning" round @click="uninstallCert">卸载证书</el-button>
             <el-button-group>
-              <el-button type="primary" @click="start">启动服务</el-button>
-              <el-button type="warning" @click="stop">停止服务</el-button>
+              <el-button type="primary" @click="startProxy">启动服务</el-button>
+              <el-button type="warning" @click="stopProxy">停止服务</el-button>
               <el-button type="danger" @click="clear">清除数据</el-button>
             </el-button-group>
           </el-space>
@@ -253,7 +304,7 @@ const headers = [
           </el-space>
         </el-col>
       </el-row>
-      <EasyDataTable :headers="headers" :items="tableData" :table-height="httpheight">
+      <EasyDataTable :headers="httpheaders" :items="httpTableData" :table-height="httpheight">
         <template #expand="item">
           <div style="padding: 15px">
             <span v-for="(item, index) in item.Header" v-bind:key="index">
@@ -271,15 +322,21 @@ const headers = [
             <el-option v-for="item in data.devices" :key="item.Name" :label="item.Description" :value="item.Name" />
           </el-select>
         </el-col>
-        <el-col :span="6">
-          <el-button type="primary" round @click="getDevices">获取</el-button>
+        <el-col :span="18">
+          <el-space wrap>
+            <el-button type="primary" round @click="getDevices">获取</el-button>
+            <el-button-group>
+              <el-button type="primary" @click="startTCPCapture">启动服务</el-button>
+              <el-button type="warning" @click="stopTCPCapture">停止服务</el-button>
+            </el-button-group>
+          </el-space>
         </el-col>
       </el-row>
       <el-row style="margin-bottom:5px">
         <el-col>
           <el-space wrap>
-            <el-input-number v-model="data.config.TCP.Snaplen"
-              @change="handleChange('TCP.Snaplen')" :controls="false" aria-label="数据包长度">
+            <el-input-number v-model="data.config.TCP.Snaplen" @change="handleChange('TCP.Snaplen')" :controls="false"
+              aria-label="数据包长度">
               <template #prefix>
                 <span>数据包长度</span>
               </template>
@@ -295,6 +352,16 @@ const headers = [
           </el-space>
         </el-col>
       </el-row>
+      <EasyDataTable :headers="tcpheaders" :items="tcpTableData" :table-height="httpheight">
+        <template #expand="item">
+          <div style="padding: 15px">
+            <span v-for="(item, index) in item.Header" v-bind:key="index">
+              <p>{{ index }}: {{ item.join(",") }}</p>
+            </span>
+            <pre>{{ item.Body }}</pre>
+          </div>
+        </template>
+      </EasyDataTable>
     </el-tab-pane>
   </el-tabs>
 </template>

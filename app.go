@@ -88,10 +88,12 @@ func (a *App) RunLoop() {
 				// 追加内容
 				file.Write(b)
 				file.WriteString("\n\n")
-			} else {
-				runtime.EventsEmit(a.ctx, "Packet", packet)
-
 			}
+		} else if packet.PacketType == models.PacketType_TCP {
+			runtime.EventsEmit(a.ctx, "TCPPacket", packet.TCP)
+		} else {
+			runtime.EventsEmit(a.ctx, "Packet", packet)
+
 		}
 	}
 }
@@ -292,23 +294,27 @@ func (a *App) GetDevices() (data []models.Device) {
 func (a *App) StartTCPCapture(device string) {
 	a.lock.Lock()
 	defer a.lock.Unlock()
-
-	handle, err := pcap.OpenLive(device, a.config.TCP.Snaplen, a.config.TCP.Promisc, time.Duration(a.config.TCP.Timeout)*time.Millisecond)
+	a.config.TCP.Device = device
+	handle, err := pcap.OpenLive(a.config.TCP.Device, a.config.TCP.Snaplen, a.config.TCP.Promisc, time.Duration(a.config.TCP.Timeout)*time.Millisecond)
 	if err != nil {
 		a.FireErrorEvent(2, fmt.Sprintf("数据抓包开启失败: %s", err.Error()))
 		return
 	}
-	defer handle.Close()
+	a.tcphandle = handle
 	a.config.TCP.Status = 1
 	// Use the handle as a packet source to process all packets
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
-	for packet := range packetSource.Packets() {
-		// Process packet here
-		data := printPacketInfo(packet)
-		a.dataChan <- &models.Packet{
-			TCP: data,
+	go func() {
+		defer handle.Close()
+		for packet := range packetSource.Packets() {
+			// Process packet here
+			data := printPacketInfo(packet)
+			a.dataChan <- &models.Packet{
+				PacketType: models.PacketType_TCP,
+				TCP:        data,
+			}
 		}
-	}
+	}()
 }
 
 func (a *App) StopTCPCapture() {
@@ -326,6 +332,7 @@ func (a *App) StopTCPCapture() {
 func printPacketInfo(packet gopacket.Packet) models.TCPPacket {
 
 	data := models.TCPPacket{}
+	data.Date = time.Now().Format(time.DateTime)
 	// Let's see if the packet is an ethernet packet
 	// 判断数据包是否为以太网数据包，可解析出源mac地址、目的mac地址、以太网类型（如ip类型）等
 	ethernetLayer := packet.Layer(layers.LayerTypeEthernet)
@@ -337,6 +344,9 @@ func printPacketInfo(packet gopacket.Packet) models.TCPPacket {
 		// Ethernet type is typically IPv4 but could be ARP or other
 		fmt.Println("Ethernet type: ", ethernetPacket.EthernetType)
 		fmt.Println()
+		data.SrcMAC = ethernetPacket.SrcMAC.String()
+		data.DstMAC = ethernetPacket.DstMAC.String()
+		data.EthernetType = uint16(ethernetPacket.EthernetType)
 	}
 	// Let's see if the packet is IP (even though the ether type told us)
 	// 判断数据包是否为IP数据包，可解析出源ip、目的ip、协议号等
@@ -352,6 +362,9 @@ func printPacketInfo(packet gopacket.Packet) models.TCPPacket {
 		fmt.Printf("From %s to %s\n", ip.SrcIP, ip.DstIP)
 		fmt.Println("Protocol: ", ip.Protocol)
 		fmt.Println()
+		data.SrcIP = ip.SrcIP.String()
+		data.DstIP = ip.DstIP.String()
+		data.Protocol = uint8(ip.Protocol)
 	}
 	// Let's see if the packet is TCP
 	// 判断数据包是否为TCP数据包，可解析源端口、目的端口、seq序列号、tcp标志位等
@@ -365,6 +378,8 @@ func printPacketInfo(packet gopacket.Packet) models.TCPPacket {
 		fmt.Printf("From port %d to %d\n", tcp.SrcPort, tcp.DstPort)
 		fmt.Println("Sequence number: ", tcp.Seq)
 		fmt.Println()
+		data.SrcPort = uint16(tcp.SrcPort)
+		data.DstPort = uint16(tcp.DstPort)
 	}
 	// Iterate over all layers, printing out each layer type
 	fmt.Println("All packet layers:")

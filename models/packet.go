@@ -45,12 +45,11 @@ type HTTPPacket struct {
 }
 
 type TCPPacket struct {
-	Date      string
-	DateTime  time.Time
-	LayerType int64 `json:"LayerType,omitempty"` // layers.LayerTypeEthernet layers.LayerTypeIPv4 layers.LayerTypeTCP
+	Date     string
+	DateTime time.Time
 	// Ethernet
-	SrcMAC       []byte `json:"SrcMAC,omitempty"`
-	DstMAC       []byte `json:"DstMAC,omitempty"`
+	SrcMAC       string `json:"SrcMAC,omitempty"`
+	DstMAC       string `json:"DstMAC,omitempty"`
 	EthernetType uint16 `json:"EthernetType,omitempty"`
 	Length       uint16 `json:"Length,omitempty"`
 	// IPv4
