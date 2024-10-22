@@ -380,33 +380,37 @@ func printPacketInfo(packet gopacket.Packet) models.IPPacket {
 			data.Protocol = uint8(ip.NextHeader)
 		}
 	}
-	// Let's see if the packet is TCP
-	// 判断数据包是否为TCP数据包，可解析源端口、目的端口、seq序列号、tcp标志位等
-	tcpLayer := packet.Layer(layers.LayerTypeTCP)
-	if tcpLayer != nil {
-		fmt.Println("TCP layer detected.")
-		tcp, _ := tcpLayer.(*layers.TCP)
-		// TCP layer variables:
-		// SrcPort, DstPort, Seq, Ack, DataOffset, Window, Checksum, Urgent
-		// Bool flags: FIN, SYN, RST, PSH, ACK, URG, ECE, CWR, NS
-		fmt.Printf("From port %d to %d\n", tcp.SrcPort, tcp.DstPort)
-		fmt.Println("Sequence number: ", tcp.Seq)
-		fmt.Println()
-		data.IPPacketType = models.IPPacketType_TCP
-		data.SrcPort = uint16(tcp.SrcPort)
-		data.DstPort = uint16(tcp.DstPort)
+	{
+		// Let's see if the packet is TCP
+		// 判断数据包是否为TCP数据包，可解析源端口、目的端口、seq序列号、tcp标志位等
+		tcpLayer := packet.Layer(layers.LayerTypeTCP)
+		if tcpLayer != nil {
+			fmt.Println("TCP layer detected.")
+			tcp, _ := tcpLayer.(*layers.TCP)
+			// TCP layer variables:
+			// SrcPort, DstPort, Seq, Ack, DataOffset, Window, Checksum, Urgent
+			// Bool flags: FIN, SYN, RST, PSH, ACK, URG, ECE, CWR, NS
+			fmt.Printf("From port %d to %d\n", tcp.SrcPort, tcp.DstPort)
+			fmt.Println("Sequence number: ", tcp.Seq)
+			fmt.Println()
+			data.IPPacketType = models.IPPacketType_TCP
+			data.SrcPort = uint16(tcp.SrcPort)
+			data.DstPort = uint16(tcp.DstPort)
+		}
 	}
-	udpLayer := packet.Layer(layers.LayerTypeUDP)
-	if udpLayer != nil {
-		fmt.Println("UDP layer detected.")
-		udp, _ := tcpLayer.(*layers.UDP)
-		// UDP layer variables:
-		// SrcPort, DstPort, Length, Checksum
-		fmt.Printf("From port %d to %d\n", udp.SrcPort, udp.DstPort)
-		fmt.Println()
-		data.IPPacketType = models.IPPacketType_UDP
-		data.SrcPort = uint16(udp.SrcPort)
-		data.DstPort = uint16(udp.DstPort)
+	{
+		udpLayer := packet.Layer(layers.LayerTypeUDP)
+		if udpLayer != nil {
+			fmt.Println("UDP layer detected.")
+			udp, _ := udpLayer.(*layers.UDP)
+			// UDP layer variables:
+			// SrcPort, DstPort, Length, Checksum
+			fmt.Printf("From port %d to %d\n", udp.SrcPort, udp.DstPort)
+			fmt.Println()
+			data.IPPacketType = models.IPPacketType_UDP
+			data.SrcPort = uint16(udp.SrcPort)
+			data.DstPort = uint16(udp.DstPort)
+		}
 	}
 	// Iterate over all layers, printing out each layer type
 	fmt.Println("All packet layers:")
