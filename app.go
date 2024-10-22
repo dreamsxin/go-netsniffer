@@ -89,8 +89,8 @@ func (a *App) RunLoop() {
 				file.Write(b)
 				file.WriteString("\n\n")
 			}
-		} else if packet.PacketType == models.PacketType_TCP {
-			runtime.EventsEmit(a.ctx, "TCPPacket", packet.TCP)
+		} else if packet.PacketType == models.PacketType_IP {
+			runtime.EventsEmit(a.ctx, "IPPacket", packet.IP)
 		} else {
 			runtime.EventsEmit(a.ctx, "Packet", packet)
 
@@ -310,8 +310,8 @@ func (a *App) StartTCPCapture(device string) {
 			// Process packet here
 			data := printPacketInfo(packet)
 			a.dataChan <- &models.Packet{
-				PacketType: models.PacketType_TCP,
-				TCP:        data,
+				PacketType: models.PacketType_IP,
+				IP:         data,
 			}
 		}
 	}()
@@ -329,9 +329,9 @@ func (a *App) StopTCPCapture() {
 	}
 }
 
-func printPacketInfo(packet gopacket.Packet) models.TCPPacket {
+func printPacketInfo(packet gopacket.Packet) models.IPPacket {
 
-	data := models.TCPPacket{}
+	data := models.IPPacket{}
 	data.Date = time.Now().Format(time.DateTime)
 	// Let's see if the packet is an ethernet packet
 	// 判断数据包是否为以太网数据包，可解析出源mac地址、目的mac地址、以太网类型（如ip类型）等
@@ -362,9 +362,23 @@ func printPacketInfo(packet gopacket.Packet) models.TCPPacket {
 		fmt.Printf("From %s to %s\n", ip.SrcIP, ip.DstIP)
 		fmt.Println("Protocol: ", ip.Protocol)
 		fmt.Println()
+		data.IPVersion = 4
 		data.SrcIP = ip.SrcIP.String()
 		data.DstIP = ip.DstIP.String()
 		data.Protocol = uint8(ip.Protocol)
+	} else {
+		ipLayer = packet.Layer(layers.LayerTypeIPv6)
+		if ipLayer != nil {
+			fmt.Println("IPv6 layer detected.")
+			ip, _ := ipLayer.(*layers.IPv6)
+			fmt.Printf("From %s to %s\n", ip.SrcIP, ip.DstIP)
+			fmt.Println("Protocol: ", ip.NextHeader)
+			fmt.Println()
+			data.IPVersion = 6
+			data.SrcIP = ip.SrcIP.String()
+			data.DstIP = ip.DstIP.String()
+			data.Protocol = uint8(ip.NextHeader)
+		}
 	}
 	// Let's see if the packet is TCP
 	// 判断数据包是否为TCP数据包，可解析源端口、目的端口、seq序列号、tcp标志位等
@@ -378,8 +392,21 @@ func printPacketInfo(packet gopacket.Packet) models.TCPPacket {
 		fmt.Printf("From port %d to %d\n", tcp.SrcPort, tcp.DstPort)
 		fmt.Println("Sequence number: ", tcp.Seq)
 		fmt.Println()
+		data.IPPacketType = models.IPPacketType_TCP
 		data.SrcPort = uint16(tcp.SrcPort)
 		data.DstPort = uint16(tcp.DstPort)
+	}
+	udpLayer := packet.Layer(layers.LayerTypeUDP)
+	if udpLayer != nil {
+		fmt.Println("UDP layer detected.")
+		udp, _ := tcpLayer.(*layers.UDP)
+		// UDP layer variables:
+		// SrcPort, DstPort, Length, Checksum
+		fmt.Printf("From port %d to %d\n", udp.SrcPort, udp.DstPort)
+		fmt.Println()
+		data.IPPacketType = models.IPPacketType_UDP
+		data.SrcPort = uint16(udp.SrcPort)
+		data.DstPort = uint16(udp.DstPort)
 	}
 	// Iterate over all layers, printing out each layer type
 	fmt.Println("All packet layers:")

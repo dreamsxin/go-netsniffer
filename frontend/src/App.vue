@@ -104,8 +104,8 @@ const tcpheaders = [
 ];
 const tcpTableData = reactive([
 ])
-EventsOn("TCPPacket", function (v) {
-  console.log("TCPPacket", v)
+EventsOn("IPPacket", function (v) {
+  console.log("IPPacket", v)
   tcpTableData.push(v)
 });
 

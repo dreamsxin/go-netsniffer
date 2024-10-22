@@ -9,13 +9,13 @@ type PacketType int
 
 const (
 	PacketType_HTTP PacketType = iota
-	PacketType_TCP  PacketType = iota
+	PacketType_IP
 )
 
 type Packet struct {
 	PacketType PacketType
 	HTTP       HTTPPacket
-	TCP        TCPPacket
+	IP         IPPacket
 }
 
 type HTTPPacketType int
@@ -44,9 +44,18 @@ type HTTPPacket struct {
 	ContentLength  int64          `json:"ContentLength,omitempty"`
 }
 
-type TCPPacket struct {
-	Date     string
-	DateTime time.Time
+type IPPacketType int
+
+const (
+	IPPacketType_TCP IPPacketType = iota
+	IPPacketType_UDP
+)
+
+type IPPacket struct {
+	Date         string
+	DateTime     time.Time
+	IPPacketType IPPacketType `json:"IPPacketType,omitempty"`
+	IPVersion    int          `json:"IPVersion,omitempty"`
 	// Ethernet
 	SrcMAC       string `json:"SrcMAC,omitempty"`
 	DstMAC       string `json:"DstMAC,omitempty"`
@@ -56,7 +65,7 @@ type TCPPacket struct {
 	SrcIP    string `json:"SrcIP,omitempty"`
 	DstIP    string `json:"DstIP,omitempty"`
 	Protocol uint8  `json:"Protocol,omitempty"`
-	// TCP
+	// TCP/UDP
 	SrcPort uint16 `json:"SrcPort,omitempty"`
 	DstPort uint16 `json:"DstPort,omitempty"`
 }
