@@ -53,7 +53,7 @@ func NewApp() *App {
 				Timeout: 1000,
 			},
 		},
-		dataChan: make(chan *models.Packet, 200),
+		dataChan: make(chan *models.Packet, 1000),
 	}
 
 	go a.RunLoop()
@@ -114,7 +114,7 @@ func (a *App) startup(ctx context.Context) {
 
 func (a *App) shutdown(ctx context.Context) {
 	a.StopProxy()
-
+	a.StopTCPCapture()
 	close(a.dataChan)
 	a.dataChan = nil
 	b, err := json.Marshal(a.config)
@@ -300,12 +300,11 @@ func (a *App) StartTCPCapture(device string) {
 		a.FireErrorEvent(2, fmt.Sprintf("数据抓包开启失败: %s", err.Error()))
 		return
 	}
-	a.tcphandle = handle
 	a.config.TCP.Status = 1
+	a.tcphandle = handle
 	// Use the handle as a packet source to process all packets
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	go func() {
-		defer handle.Close()
 		for packet := range packetSource.Packets() {
 			// Process packet here
 			data := printPacketInfo(packet)
@@ -314,18 +313,20 @@ func (a *App) StartTCPCapture(device string) {
 				IP:         data,
 			}
 		}
+		a.config.TCP.Status = 0
 	}()
 }
 
-func (a *App) StopTCPCapture() {
+func (a *App) StopTCPCapture() *events.Event {
 	a.lock.Lock()
 	defer a.lock.Unlock()
 	if a.tcphandle != nil {
 		a.config.TCP.Status = 0
 		a.tcphandle.Close()
 		a.tcphandle = nil
+		return nil
 	} else {
-		a.FireErrorEvent(2, "数据抓包已经结束")
+		return &events.Event{Type: events.ERROR, Code: 2, Message: "数据抓包已经停止"}
 	}
 }
 

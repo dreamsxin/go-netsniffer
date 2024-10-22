@@ -29,7 +29,7 @@ export function StartTCPCapture(arg1:string):Promise<void>;
 
 export function StopProxy():Promise<events.Event>;
 
-export function StopTCPCapture():Promise<void>;
+export function StopTCPCapture():Promise<events.Event>;
 
 export function Test():Promise<string>;
 
