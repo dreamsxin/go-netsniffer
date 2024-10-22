@@ -343,6 +343,7 @@ func printPacketInfo(packet gopacket.Packet) models.IPPacket {
 
 	data := models.IPPacket{}
 	data.Date = time.Now().Format(time.DateTime)
+
 	// Let's see if the packet is an ethernet packet
 	// 判断数据包是否为以太网数据包，可解析出源mac地址、目的mac地址、以太网类型（如ip类型）等
 	ethernetLayer := packet.Layer(layers.LayerTypeEthernet)
@@ -404,8 +405,11 @@ func printPacketInfo(packet gopacket.Packet) models.IPPacket {
 			fmt.Println("Sequence number: ", tcp.Seq)
 			fmt.Println()
 			data.IPPacketType = models.IPPacketType_TCP
+			data.Seq = tcp.Seq
 			data.SrcPort = uint16(tcp.SrcPort)
 			data.DstPort = uint16(tcp.DstPort)
+
+			data.TCPPayload = string(tcpLayer.LayerPayload())
 		}
 	}
 	{
