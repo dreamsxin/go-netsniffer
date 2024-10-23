@@ -57,20 +57,23 @@ type IPPacket struct {
 	IPPacketType IPPacketType `json:"IPPacketType,omitempty"`
 	IPVersion    int          `json:"IPVersion,omitempty"`
 	// Ethernet
-	EthernetType uint16 `json:"EthernetType,omitempty"`
-	SrcMAC       string `json:"SrcMAC,omitempty"`
-	DstMAC       string `json:"DstMAC,omitempty"`
-	Length       uint16 `json:"Length,omitempty"`
-	// IPv4
-	SrcIP    string `json:"SrcIP,omitempty"`
-	DstIP    string `json:"DstIP,omitempty"`
-	Protocol uint8  `json:"Protocol,omitempty"`
+	EthernetType    uint16 `json:"EthernetType,omitempty"`
+	SrcMAC          string `json:"SrcMAC,omitempty"`
+	DstMAC          string `json:"DstMAC,omitempty"`
+	Length          uint16 `json:"Length,omitempty"`
+	EthernetPayload []byte `json:"EthernetPayload,omitempty"`
+	// IPv4/IPv6
+	SrcIP     string `json:"SrcIP,omitempty"`
+	DstIP     string `json:"DstIP,omitempty"`
+	Protocol  uint8  `json:"Protocol,omitempty"`
+	IPPayload []byte `json:"IPPayload,omitempty"`
 	// TCP/UDP
 	Seq        uint32 `json:"Seq,omitempty"`
 	SrcPort    uint16 `json:"SrcPort,omitempty"`
 	DstPort    uint16 `json:"DstPort,omitempty"`
-	TCPPayload string `json:"TCPPayload,omitempty"`
+	TCPPayload []byte `json:"TCPPayload,omitempty"`
+	UDPPayload []byte `json:"UDPPayload,omitempty"`
 	// Application
-	ApplicationLayer string `json:"ApplicationLayer,omitempty"`
-	Payload          string `json:"Payload,omitempty"`
+	ApplicationLayer   string `json:"ApplicationLayer,omitempty"`
+	ApplicationPayload []byte `json:"ApplicationPayload,omitempty"`
 }
