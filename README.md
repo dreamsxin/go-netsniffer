@@ -26,3 +26,8 @@ wails build -nsis
 
 ![screenshot-3](https://github.com/dreamsxin/go-netsniffer/blob/main/screenshot/screenshot-03.png?raw=true)
 ![screenshot-4](https://github.com/dreamsxin/go-netsniffer/blob/main/screenshot/screenshot-04.png?raw=true)
+
+Donation
+--------
+
+* [捐贈（Donation）](https://github.com/dreamsxin/cphalcon7/blob/master/DONATE.md)
