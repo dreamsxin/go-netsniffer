@@ -73,10 +73,11 @@ func New(authorityName string, handler ServeHandler) (*martian.Proxy, error) {
 	}
 
 	mitmConf, err := mitm.NewConfig(crt, privKey)
-	mitmConf.SetOrganization(authorityName)
 	if err != nil {
 		return nil, fmt.Errorf("初始化证书生成失败: %w", err)
 	}
+	mitmConf.SetOrganization(authorityName)
+	mitmConf.SetValidity(365 * 24 * time.Hour) // 设置证书有效期为1年
 
 	proxy := martian.NewProxy()
 	proxy.SetMITM(mitmConf)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -29,8 +30,11 @@ func NewRequestLogger(ctx context.Context, sendChan chan<- *models.Packet) *Requ
 	return &RequestLogger{ctx: ctx, sendChan: sendChan}
 }
 
-var regex *regexp.Regexp
-var regexRawData *regexp.Regexp
+var (
+	regex        *regexp.Regexp
+	regexRawData *regexp.Regexp
+	logEnabled   = false // 可通过配置控制
+)
 
 func init() {
 
@@ -61,12 +65,17 @@ func (r *RequestLogger) ModifyRequest(req *http.Request) error {
 	if data.HTTP.ContentLength == 0 {
 		data.HTTP.Body = "[no data]"
 	} else {
-		rb, _ := io.ReadAll(req.Body)
+		rb, err := io.ReadAll(req.Body)
+		if err != nil {
+			return fmt.Errorf("读取请求体失败: %w", err)
+		}
 		req.Body.Close()
 		req.Body = io.NopCloser(bytes.NewBuffer(rb))
 		data.HTTP.Body = string(rb)
 	}
-
+	if logEnabled {
+		log.Println("ModifyRequest", data.HTTP.URL)
+	}
 	r.sendChan <- &data
 	return nil
 }
