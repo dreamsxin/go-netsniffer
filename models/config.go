@@ -1,12 +1,13 @@
 package models
 
 type HTTP struct {
-	Status      int // 0 未启动 1 启动中 2 已启动
-	Port        int
-	AutoProxy   bool
-	SaveLogFile bool
-	Filter      bool
-	FilterHost  string
+	Status        int // 0 未启动 1 启动中 2 已启动
+	Port          int
+	AutoProxy     bool
+	SaveLogFile   bool
+	Filter        bool
+	FilterHost    string
+	ResourceTypes []string
 }
 
 type IP struct {

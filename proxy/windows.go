@@ -2,9 +2,9 @@ package proxy
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/dreamsxin/go-netsniffer/cmd"
+	"golang.org/x/sys/windows/registry"
 )
 
 func executeCommand(name string, args ...string) ([]byte, error) {
@@ -17,35 +17,31 @@ func executeCommand(name string, args ...string) ([]byte, error) {
 }
 
 func EnableProxy(port int) error {
-	// set info
-	// set-itemproperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -name ProxyServer -value host:port
-	_, err := executeCommand("powershell", fmt.Sprintf("set-itemproperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -name ProxyServer -value 127.0.0.1:%d", port))
+	key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Internet Settings`, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer key.Close()
+
+	err = key.SetStringValue("ProxyServer", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		return err
 	}
 
-	// enable proxy
-	// set-itemproperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -name ProxyEnable -value 1
-	_, err = executeCommand("powershell", "set-itemproperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -name ProxyEnable -value 1")
+	err = key.SetDWordValue("ProxyEnable", 1)
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-func VerifyProxySettings(port int) (bool, error) {
-	output, err := executeCommand("netsh", "winhttp", "show", "proxy")
-	if err != nil {
-		return false, err
-	}
-	expectedProxy := fmt.Sprintf("127.0.0.1:%d", port)
-	return strings.Contains(string(output), expectedProxy), nil
-}
-
 func DisableProxy() error {
-	// Disable Proxy
-	// set-itemproperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Internet Settings' -name ProxyEnable -value 0
-	_, err := executeCommand("powershell", "set-itemproperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -name ProxyEnable -value 0")
+	key, err := registry.OpenKey(registry.CURRENT_USER, `Software\Microsoft\Windows\CurrentVersion\Internet Settings`, registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer key.Close()
+	err = key.SetDWordValue("ProxyEnable", 0)
 	if err != nil {
 		return err
 	}

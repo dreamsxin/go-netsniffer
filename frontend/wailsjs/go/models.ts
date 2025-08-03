@@ -68,6 +68,7 @@ export namespace models {
 	    SaveLogFile: boolean;
 	    Filter: boolean;
 	    FilterHost: string;
+	    ResourceTypes: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new HTTP(source);
@@ -81,6 +82,7 @@ export namespace models {
 	        this.SaveLogFile = source["SaveLogFile"];
 	        this.Filter = source["Filter"];
 	        this.FilterHost = source["FilterHost"];
+	        this.ResourceTypes = source["ResourceTypes"];
 	    }
 	}
 	export class Config {

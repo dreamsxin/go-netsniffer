@@ -79,6 +79,20 @@ func (a *App) RunLoop() {
 				}
 			}
 
+			if len(a.config.HTTP.ResourceTypes) > 0 {
+				contentType := packet.HTTP.ContentType
+				matched := false
+				for _, rt := range a.config.HTTP.ResourceTypes {
+					if strings.Contains(strings.ToLower(contentType), strings.ToLower(rt)) {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					continue
+				}
+			}
+
 			runtime.EventsEmit(a.ctx, "HTTPPacket", packet.HTTP)
 			if a.config.HTTP.SaveLogFile {
 				b, err := json.Marshal(packet.HTTP)

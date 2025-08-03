@@ -1,0 +1,19 @@
+{
+    "HTTP": {
+        "Status": 0,
+        "Port": 9000,
+        "AutoProxy": true,
+        "SaveLogFile": false,
+        "Filter": false,
+        "FilterHost": "",
+        "ResourceTypes": []
+    },
+    "IP": {
+        "Status": 0,
+        "Device": "\\Device\\NPF_{4EE86726-707A-4457-8584-B606DF442CBF}",
+        "Snaplen": 1024,
+        "Promisc": true,
+        "Timeout": 1000,
+        "Filter": "tcp and port 443"
+    }
+}

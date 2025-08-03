@@ -10,6 +10,7 @@ require (
 	github.com/google/martian/v3 v3.3.3
 	github.com/valyala/gozstd v1.21.2
 	github.com/wailsapp/wails/v2 v2.9.2
+	golang.org/x/sys v0.26.0
 )
 
 require (
@@ -41,7 +42,6 @@ require (
 	golang.org/x/crypto v0.25.0 // indirect
 	golang.org/x/exp v0.0.0-20231110203233-9a3e6036ecaa // indirect
 	golang.org/x/net v0.27.0 // indirect
-	golang.org/x/sys v0.26.0 // indirect
 	golang.org/x/text v0.18.0 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20231120223509-83a465c0220f // indirect
 	google.golang.org/grpc v1.59.0 // indirect
