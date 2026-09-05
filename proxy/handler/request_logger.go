@@ -63,7 +63,8 @@ func (r *RequestLogger) Request(req *http.Request, id string) {
 		if err != nil {
 			data.HTTP.Body = fmt.Sprintf("[read error] %s", err)
 		} else {
-			data.HTTP.Body = decorate(string(body), truncated)
+			data.HTTP.Body = string(body)
+			data.HTTP.BodyTruncated = truncated
 		}
 	}
 
@@ -125,7 +126,8 @@ func (r *RequestLogger) Response(resp *http.Response, id string, duration time.D
 			data.HTTP.Body = fmt.Sprintf("[decode error] %s", err)
 			break
 		}
-		data.HTTP.Body = decorate(text, truncated)
+		data.HTTP.Body = text
+		data.HTTP.BodyTruncated = truncated
 	}
 
 	r.sink.Emit(&data)
@@ -204,11 +206,4 @@ func decodeBody(contentEncoding string, raw []byte) (string, error) {
 	default:
 		return string(raw), nil
 	}
-}
-
-func decorate(body string, truncated bool) string {
-	if truncated {
-		return body + "\n...[truncated]"
-	}
-	return body
 }

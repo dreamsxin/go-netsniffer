@@ -197,6 +197,7 @@ export namespace models {
 	    URL?: string;
 	    Header?: Record<string, Array<string>>;
 	    Body?: string;
+	    BodyTruncated?: boolean;
 	    Status?: string;
 	    StatusCode?: number;
 	    ContentType?: string;
@@ -224,6 +225,7 @@ export namespace models {
 	        this.URL = source["URL"];
 	        this.Header = source["Header"];
 	        this.Body = source["Body"];
+	        this.BodyTruncated = source["BodyTruncated"];
 	        this.Status = source["Status"];
 	        this.StatusCode = source["StatusCode"];
 	        this.ContentType = source["ContentType"];
@@ -232,6 +234,25 @@ export namespace models {
 	        this.ResourceType = source["ResourceType"];
 	        this.Suffix = source["Suffix"];
 	        this.RequestHeader = source["RequestHeader"];
+	    }
+	}
+	
+	export class ReplayRequest {
+	    Method: string;
+	    URL: string;
+	    Header?: Record<string, Array<string>>;
+	    Body?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ReplayRequest(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Method = source["Method"];
+	        this.URL = source["URL"];
+	        this.Header = source["Header"];
+	        this.Body = source["Body"];
 	    }
 	}
 

@@ -22,6 +22,7 @@ import (
 	"github.com/dreamsxin/go-netsniffer/models"
 	"github.com/dreamsxin/go-netsniffer/paths"
 	"github.com/dreamsxin/go-netsniffer/proxy"
+	"github.com/dreamsxin/go-netsniffer/replay"
 	"github.com/dreamsxin/go-netsniffer/rule"
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/pcapgo"
@@ -632,6 +633,42 @@ func (a *App) ExportHAR(packets []models.HTTPPacket) *events.Event {
 		return &events.Event{Type: events.ERROR, Code: 5, Message: fmt.Sprintf("导出失败: %s", err)}
 	}
 	return &events.Event{Type: events.NOTICE, Code: 0, Message: fmt.Sprintf("已导出到 %s", dest)}
+}
+
+// Replay 重新发送一个请求。请求经由本机代理发出，
+// 因此重放的请求与响应会走一遍正常抓取流程，直接出现在列表里。
+func (a *App) Replay(req models.ReplayRequest) *events.Event {
+	if req.URL == "" {
+		return &events.Event{Type: events.ERROR, Code: 6, Message: "重放地址为空"}
+	}
+
+	cfg := a.snapshot()
+	// 重放依赖代理本身，代理没启动就无从记录结果
+	if cfg.HTTP.Status != statusRunning {
+		return &events.Event{Type: events.ERROR, Code: 6, Message: "请先启动代理服务再重放"}
+	}
+
+	client, err := replay.New(cfg.HTTP.Port)
+	if err != nil {
+		return &events.Event{Type: events.ERROR, Code: 6, Message: err.Error()}
+	}
+
+	a.safeGo("请求重放", func() {
+		res, err := client.Send(a.ctx, replay.Request{
+			Method: req.Method,
+			URL:    req.URL,
+			Header: req.Header,
+			Body:   req.Body,
+		})
+		if err != nil {
+			a.FireErrorEvent(6, fmt.Sprintf("重放失败: %s", err))
+			return
+		}
+		a.FireEvent(0, fmt.Sprintf("重放完成: %s，耗时 %d ms",
+			res.Status, res.Duration.Milliseconds()))
+	})
+
+	return nil
 }
 
 func (a *App) GetDevices() (data []models.Device) {

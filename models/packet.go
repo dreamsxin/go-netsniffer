@@ -38,10 +38,13 @@ type HTTPPacket struct {
 	Host           string         `json:"Host,omitempty"`
 	Path           string         `json:"Path,omitempty"`
 	URL            string         `json:"URL,omitempty"`
-	Header         http.Header    `json:"Header,omitempty"`
-	Body           string         `json:"Body,omitempty"`
-	Status         string         `json:"Status,omitempty"`     // e.g. "200 OK"
-	StatusCode     int            `json:"StatusCode,omitempty"` // e.g. 200
+	Header        http.Header `json:"Header,omitempty"`
+	Body          string      `json:"Body,omitempty"`
+	// BodyTruncated 表示 Body 只是前 MaxBodySize 字节。
+	// 重放这类请求会发出不完整的数据，必须先提醒用户。
+	BodyTruncated bool   `json:"BodyTruncated,omitempty"`
+	Status        string `json:"Status,omitempty"`     // e.g. "200 OK"
+	StatusCode    int    `json:"StatusCode,omitempty"` // e.g. 200
 	ContentType    string         `json:"ContentType,omitempty"`
 	ContentLength  int64          `json:"ContentLength,omitempty"`
 	// Duration 为该次往返的耗时（毫秒），只在响应记录上有值
@@ -54,6 +57,14 @@ type HTTPPacket struct {
 	// 保留它是为了下载时能原样重放请求头，绕过 Referer / 防盗链校验；
 	// 这样就不必把响应体缓存在内存里。
 	RequestHeader http.Header `json:"RequestHeader,omitempty"`
+}
+
+// ReplayRequest 是界面提交的重放请求，允许在原记录基础上修改后再发送。
+type ReplayRequest struct {
+	Method string      `json:"Method"`
+	URL    string      `json:"URL"`
+	Header http.Header `json:"Header,omitempty"`
+	Body   string      `json:"Body,omitempty"`
 }
 
 type IPPacketType int

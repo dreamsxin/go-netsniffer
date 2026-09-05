@@ -1,8 +1,8 @@
 <script setup>
 import { EventsOn } from '../wailsjs/runtime/runtime'
-import { ref, reactive, useTemplateRef, watch, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, computed } from 'vue'
 import { ElNotification } from 'element-plus'
-import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture, GetDataDir, CertStatus, Download, ExportHAR } from '../wailsjs/go/main/App'
+import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture, GetDataDir, CertStatus, Download, ExportHAR, Replay } from '../wailsjs/go/main/App'
 
 const data = reactive({
   config: {
@@ -10,40 +10,59 @@ const data = reactive({
     IP: {},
   },
   resultText: "",
-  windowWidth: 1024,
-  windowHeight: 768,
-  headerheight: 185,
-  ftooerheight: 100,
-  rate: 0,
   devices: [],
   selectdevice: null,
   dataDir: "",
   cert: { Generated: false, TrustedScopes: [], CertPath: "", NotAfter: "" },
   downloads: {},
+  replay: {
+    visible: false,
+    method: "GET",
+    url: "",
+    headerText: "",
+    body: "",
+    truncated: false,
+  },
 })
 
-let mainheight = computed(() => data.windowHeight - data.headerheight)
-let httpheight = computed(() => data.windowHeight - 185)
+// 表格高度实测得来，不再用"窗口高 - 魔数"估算：
+// 头部行数会随折叠面板展开、文字换行而变化，估算必然对不上，
+// 结果是整页出现滚动条、头部与分页器被滚出视野。
+const httpBodyRef = ref(null)
+const ipBodyRef = ref(null)
+const httpBodyHeight = ref(400)
+const ipBodyHeight = ref(400)
 
-const getWindowInfo = () => {
-  data.windowWidth = window.innerWidth
-  data.windowHeight = window.innerHeight
-};
+// 分页栏在表格滚动区之外，table-height 只管滚动区，
+// 因此要给它留出高度，否则分页器会被容器裁掉
+const FOOTER_RESERVE = 56
+const MIN_TABLE_HEIGHT = 160
 
-const debounce = (fn, delay) => {
-  let timer;
-  return function () {
-    if (timer) {
-      clearTimeout(timer);
-    }
-    timer = setTimeout(() => {
-      fn();
-    }, delay);
+const httpTableHeight = computed(() =>
+  Math.max(MIN_TABLE_HEIGHT, httpBodyHeight.value - FOOTER_RESERVE))
+const ipTableHeight = computed(() =>
+  Math.max(MIN_TABLE_HEIGHT, ipBodyHeight.value - FOOTER_RESERVE))
+
+let observers = []
+
+// observeHeight 跟随容器实际高度更新表格高度。
+// 标签页切换时未激活的面板高度为 0，此时保留上一次的值。
+function observeHeight(elRef, target) {
+  const el = elRef.value
+  if (!el || typeof ResizeObserver === 'undefined') {
+    return
   }
-};
+  const ro = new ResizeObserver(entries => {
+    const h = Math.floor(entries[0].contentRect.height)
+    if (h > 0) {
+      target.value = h
+    }
+  })
+  ro.observe(el)
+  observers.push(ro)
+}
 
 onMounted(() => {
-  getWindowInfo();
   GetConfig().then(config => {
     data.config = config
   })
@@ -51,8 +70,15 @@ onMounted(() => {
   GetDataDir().then(dir => {
     data.dataDir = dir
   })
-  window.addEventListener('resize', debounce(getWindowInfo, 200));// 监听窗口大小变化
+  observeHeight(httpBodyRef, httpBodyHeight)
+  observeHeight(ipBodyRef, ipBodyHeight)
 })
+
+onBeforeUnmount(() => {
+  observers.forEach(ro => ro.disconnect())
+  observers = []
+})
+
 
 function refreshCertStatus() {
   CertStatus().then(status => {
@@ -142,16 +168,17 @@ const resourceTypeText = {
 }
 
 const httpheaders = [
-  { value: 'Date', text: '日期', width: 160, fixed: true },
-  { value: 'TypeText', text: '类型', width: 80, fixed: true },
-  { value: 'Method', text: '方式', width: 90, fixed: true },
-  { value: 'Host', text: '域名', width: 220 },
-  { value: 'Path', text: '地址', width: 240 },
-  { value: 'KindText', text: '资源', width: 80 },
-  { value: 'Proto', text: '协议', width: 90 },
-  { value: 'ContentType', text: '内容类型', width: 180 },
-  { value: 'StatusCode', text: '状态', width: 90 },
-  { value: 'Duration', text: '耗时(ms)', width: 100 }
+  { value: 'Date', text: '日期', width: 150, fixed: true },
+  { value: 'TypeText', text: '类型', width: 60, fixed: true },
+  { value: 'Method', text: '方式', width: 70 },
+  { value: 'Host', text: '域名', width: 190 },
+  // 地址不设固定宽度，吃掉剩余空间：URL 最需要展示长度
+  { value: 'Path', text: '地址' },
+  { value: 'KindText', text: '资源', width: 70 },
+  { value: 'Proto', text: '协议', width: 80 },
+  { value: 'ContentType', text: '内容类型', width: 150 },
+  { value: 'StatusCode', text: '状态', width: 70 },
+  { value: 'Duration', text: '耗时(ms)', width: 90 }
 ];
 const httpTableData = reactive([
 ])
@@ -164,16 +191,16 @@ EventsOn("HTTPPackets", function (list) {
 });
 
 const tcpheaders = [
-  { value: 'Date', text: '日期', width: 160, fixed: true },
-  { value: 'ApplicationLayer', text: '应用层', width: 100, fixed: true },
-  { value: 'SrcMAC', text: 'SrcMAC', width: 100, },
-  { value: 'DstMAC', text: 'DstMAC', width: 100 },
-  { value: 'SrcIP', text: 'SrcIP', width: 100, },
-  { value: 'DstIP', text: 'DstIP', width: 100 },
-  { value: 'Protocol', text: '协议', width: 100 },
-  { value: 'SrcPort', text: 'SrcPort', width: 100 },
-  { value: 'DstPort', text: 'DstPort', width: 100 },
-  { value: 'Length', text: '长度', width: 80 },
+  { value: 'Date', text: '日期', width: 150, fixed: true },
+  { value: 'ApplicationLayer', text: '应用层', width: 90, fixed: true },
+  { value: 'SrcMAC', text: 'SrcMAC', width: 130 },
+  { value: 'DstMAC', text: 'DstMAC', width: 130 },
+  { value: 'SrcIP', text: 'SrcIP' },
+  { value: 'DstIP', text: 'DstIP' },
+  { value: 'Protocol', text: '协议', width: 70 },
+  { value: 'SrcPort', text: 'SrcPort', width: 90 },
+  { value: 'DstPort', text: 'DstPort', width: 90 },
+  { value: 'Length', text: '长度', width: 70 },
 ];
 const tcpTableData = reactive([
 ])
@@ -286,6 +313,11 @@ function canDownload(item) {
   return item.HTTPPacketType === 1 && !!item.URL
 }
 
+// 隧道记录不是 HTTP 往返，没有可重放的内容
+function canReplay(item) {
+  return item.HTTPPacketType !== 2 && !!item.URL
+}
+
 // 图片与音视频尝试内联预览。预览走的是 WebView 自己的请求，
 // 带防盗链的站点可能加载失败，因此始终同时提供下载入口。
 function canPreviewInline(item) {
@@ -299,6 +331,93 @@ function downloadResource(item) {
     }
   })
 }
+
+// 请求记录带完整的请求头与请求体；
+// 响应记录只保留了请求头，重放时请求体为空
+function replayDraftFrom(item) {
+  const header = item.HTTPPacketType === 0 ? item.Header : item.RequestHeader
+  return {
+    method: item.Method || 'GET',
+    url: item.URL || '',
+    headerText: headerToText(header),
+    body: item.HTTPPacketType === 0 ? (item.Body || '') : '',
+    truncated: item.HTTPPacketType === 0 && !!item.BodyTruncated,
+  }
+}
+
+function headerToText(header) {
+  if (!header) {
+    return ''
+  }
+  const lines = []
+  for (const name of Object.keys(header).sort()) {
+    for (const value of header[name]) {
+      lines.push(`${name}: ${value}`)
+    }
+  }
+  return lines.join('\n')
+}
+
+// 解析 "Name: Value" 形式的多行文本，同名头允许出现多次
+function textToHeader(text) {
+  const header = {}
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed) {
+      continue
+    }
+    const i = trimmed.indexOf(':')
+    if (i <= 0) {
+      continue
+    }
+    const name = trimmed.slice(0, i).trim()
+    const value = trimmed.slice(i + 1).trim()
+    if (!header[name]) {
+      header[name] = []
+    }
+    header[name].push(value)
+  }
+  return header
+}
+
+// 直接按原样重放
+function replayDirect(item) {
+  const draft = replayDraftFrom(item)
+  if (draft.truncated) {
+    ElNotification({
+      title: '提示',
+      message: '该请求体超出记录上限已被截断，原样重放会发出不完整的数据，请改用“编辑重放”确认内容',
+      type: 'warning',
+      duration: 8000,
+    })
+    return
+  }
+  sendReplay(draft)
+}
+
+// 打开对话框，允许改完再发
+function openReplayDialog(item) {
+  Object.assign(data.replay, replayDraftFrom(item), { visible: true })
+}
+
+function submitReplay() {
+  data.replay.visible = false
+  sendReplay(data.replay)
+}
+
+function sendReplay(draft) {
+  Replay({
+    Method: draft.method,
+    URL: draft.url,
+    Header: textToHeader(draft.headerText),
+    Body: draft.body,
+  }).then(err => {
+    if (err != null) {
+      ElNotification({ title: 'Error', message: err.Message, type: 'error' })
+    }
+  })
+}
+
 
 function exportHar() {
   ExportHAR(httpTableData.slice()).then(result => {
@@ -413,8 +532,10 @@ function stopIPCapture() {
 </script>
 
 <template>
-  <el-tabs type="border-card" v-model="activeName" height="100vh" @tab-change="handleTabChange">
+  <el-tabs type="border-card" v-model="activeName" class="main-tabs" @tab-change="handleTabChange">
     <el-tab-pane label="HTTP" name="HTTP">
+      <div class="pane">
+        <div class="pane-header">
       <el-row style="margin-bottom:5px">
         <el-col>
           <el-space wrap>
@@ -476,13 +597,22 @@ function stopIPCapture() {
           </el-text>
         </el-col>
       </el-row>
-      <EasyDataTable :headers="httpheaders" :items="httpTableData" :table-height="httpheight">
+        </div>
+        <div class="pane-body" ref="httpBodyRef">
+      <EasyDataTable :headers="httpheaders" :items="httpTableData" :table-height="httpTableHeight">
         <template #expand="item">
           <div style="padding: 15px">
             <el-space wrap style="margin-bottom: 8px">
               <el-button v-if="canDownload(item)" type="primary" size="small" @click="downloadResource(item)">
                 下载（{{ formatSize(item.ContentLength) }}）
               </el-button>
+              <el-button v-if="canReplay(item)" type="success" size="small" @click="replayDirect(item)">
+                重放
+              </el-button>
+              <el-button v-if="canReplay(item)" size="small" @click="openReplayDialog(item)">
+                编辑重放
+              </el-button>
+              <el-text v-if="item.BodyTruncated" size="small" type="warning">正文已截断</el-text>
               <el-text v-if="data.downloads[item.ID]" size="small" type="warning">
                 正在下载 {{ data.downloads[item.ID].name }}
                 <span v-if="data.downloads[item.ID].percent >= 0">{{ data.downloads[item.ID].percent }}%</span>
@@ -506,8 +636,12 @@ function stopIPCapture() {
           </div>
         </template>
       </EasyDataTable>
+        </div>
+      </div>
     </el-tab-pane>
     <el-tab-pane label="IP" name="IP">
+      <div class="pane">
+        <div class="pane-header">
       <el-row style="margin-bottom:5px" :gutter="10">
         <el-col :span="6">
           <el-select v-model="data.selectdevice" placeholder="选择设备" clearable>
@@ -549,7 +683,9 @@ function stopIPCapture() {
           </el-space>
         </el-col>
       </el-row>
-      <EasyDataTable :headers="tcpheaders" :items="tcpTableData" :table-height="httpheight">
+        </div>
+        <div class="pane-body" ref="ipBodyRef">
+      <EasyDataTable :headers="tcpheaders" :items="tcpTableData" :table-height="ipTableHeight">
         <template #expand="item">
           <div style="padding: 15px">
             <p>ApplicationLayer: {{ item.ApplicationLayer || '-' }}</p>
@@ -557,22 +693,77 @@ function stopIPCapture() {
           </div>
         </template>
       </EasyDataTable>
+        </div>
+      </div>
     </el-tab-pane>
   </el-tabs>
+
+  <el-dialog v-model="data.replay.visible" title="编辑并重放" width="720px">
+    <el-form label-width="70px">
+      <el-form-item label="方式">
+        <el-select v-model="data.replay.method" style="width: 140px">
+          <el-option v-for="m in ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']" :key="m" :label="m"
+            :value="m" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="地址">
+        <el-input v-model="data.replay.url" placeholder="https://example.com/api" />
+      </el-form-item>
+      <el-form-item label="请求头">
+        <el-input v-model="data.replay.headerText" type="textarea" :rows="8"
+          placeholder="每行一条，格式 Name: Value" />
+      </el-form-item>
+      <el-form-item label="请求体">
+        <el-input v-model="data.replay.body" type="textarea" :rows="6" />
+      </el-form-item>
+    </el-form>
+    <el-text v-if="data.replay.truncated" size="small" type="warning">
+      原请求体已被截断，请确认内容完整后再发送
+    </el-text>
+    <el-text size="small" type="info">
+      重放经由本机代理发出，结果会作为新记录出现在列表中。Content-Length 等长度相关的头会自动重算。
+    </el-text>
+    <template #footer>
+      <el-button @click="data.replay.visible = false">取消</el-button>
+      <el-button type="primary" @click="submitReplay">发送</el-button>
+    </template>
+  </el-dialog>
 </template>
 <style scoped>
-.el-main {
-  padding: 0 !important;
+/* 整个界面撑满视口，页面本身不产生滚动条 */
+.main-tabs {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
 }
 
-.el-footer {
-  padding-top: 5px;
+.main-tabs :deep(.el-tabs__content) {
+  flex: 1;
+  min-height: 0;
+  padding: 8px;
+  overflow: hidden;
 }
 
-.affix-container {
-  text-align: center;
-  border-radius: 4px;
-  background: var(--el-color-primary-light-9);
+.main-tabs :deep(.el-tab-pane) {
+  height: 100%;
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* 头部操作区固定不滚，内容再多也不会被滚出视野 */
+.pane-header {
+  flex: none;
+}
+
+/* 表格区吃掉剩余高度；min-height:0 是 flex 子项能被压缩的前提 */
+.pane-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .item {

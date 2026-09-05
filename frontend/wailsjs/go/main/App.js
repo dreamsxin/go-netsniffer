@@ -54,6 +54,10 @@ export function InstallCert() {
   return window['go']['main']['App']['InstallCert']();
 }
 
+export function Replay(arg1) {
+  return window['go']['main']['App']['Replay'](arg1);
+}
+
 export function SetConfig(arg1, arg2) {
   return window['go']['main']['App']['SetConfig'](arg1, arg2);
 }

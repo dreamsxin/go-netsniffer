@@ -29,6 +29,8 @@ export function GetDevices():Promise<Array<models.Device>>;
 
 export function InstallCert():Promise<events.Event>;
 
+export function Replay(arg1:models.ReplayRequest):Promise<events.Event>;
+
 export function SetConfig(arg1:string,arg2:models.Config):Promise<void>;
 
 export function StartIPCapture(arg1:string):Promise<void>;
