@@ -148,6 +148,7 @@ const httpheaders = [
   { value: 'Host', text: '域名', width: 220 },
   { value: 'Path', text: '地址', width: 240 },
   { value: 'KindText', text: '资源', width: 80 },
+  { value: 'Proto', text: '协议', width: 90 },
   { value: 'ContentType', text: '内容类型', width: 180 },
   { value: 'StatusCode', text: '状态', width: 90 },
   { value: 'Duration', text: '耗时(ms)', width: 100 }

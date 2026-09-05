@@ -345,9 +345,18 @@ func (a *App) GetConfig() models.Config {
 	return a.snapshot()
 }
 
+// needsProxyRestart 判断改动的字段是否只在构造代理时生效。
+// 端口、上游代理与 HTTP/2 都是在 proxy.New 时一次性读取的。
+func needsProxyRestart(old, cur models.HTTP) bool {
+	return old.Port != cur.Port ||
+		old.UpstreamProxy != cur.UpstreamProxy ||
+		old.AllowHTTP2 != cur.AllowHTTP2
+}
+
 // SetConfig 接受界面提交的配置。运行状态由后端维护，不接受前端覆盖。
 func (a *App) SetConfig(field string, config models.Config) {
 	a.configMu.Lock()
+	old := a.config
 	httpStatus, ipStatus := a.config.HTTP.Status, a.config.IP.Status
 	config.Normalize() // Normalize 会把状态清零，之后再恢复真实状态
 	config.HTTP.Status, config.IP.Status = httpStatus, ipStatus
@@ -356,6 +365,12 @@ func (a *App) SetConfig(field string, config models.Config) {
 
 	// 规则热更新，无需重启代理
 	a.rules.Load(config.HTTP.Rule)
+
+	// 这几项在构造代理时一次性生效，改完必须重启服务，
+	// 否则用户会以为设置没作用
+	if httpStatus == statusRunning && needsProxyRestart(old.HTTP, config.HTTP) {
+		a.FireEvent(0, "该设置需要点击“停止服务”再“启动服务”后才会生效")
+	}
 
 	if field == "HTTP.AutoProxy" {
 		if config.HTTP.AutoProxy {
