@@ -57,23 +57,22 @@ type IPPacket struct {
 	IPPacketType IPPacketType `json:"IPPacketType,omitempty"`
 	IPVersion    int          `json:"IPVersion,omitempty"`
 	// Ethernet
-	EthernetType    uint16 `json:"EthernetType,omitempty"`
-	SrcMAC          string `json:"SrcMAC,omitempty"`
-	DstMAC          string `json:"DstMAC,omitempty"`
-	Length          uint16 `json:"Length,omitempty"`
-	EthernetPayload []byte `json:"EthernetPayload,omitempty"`
+	EthernetType uint16 `json:"EthernetType,omitempty"`
+	SrcMAC       string `json:"SrcMAC,omitempty"`
+	DstMAC       string `json:"DstMAC,omitempty"`
+	// Length 为整帧的抓取长度
+	Length uint16 `json:"Length,omitempty"`
 	// IPv4/IPv6
-	SrcIP     string `json:"SrcIP,omitempty"`
-	DstIP     string `json:"DstIP,omitempty"`
-	Protocol  uint8  `json:"Protocol,omitempty"`
-	IPPayload []byte `json:"IPPayload,omitempty"`
+	SrcIP    string `json:"SrcIP,omitempty"`
+	DstIP    string `json:"DstIP,omitempty"`
+	Protocol uint8  `json:"Protocol,omitempty"`
 	// TCP/UDP
-	Seq        uint32 `json:"Seq,omitempty"`
-	SrcPort    uint16 `json:"SrcPort,omitempty"`
-	DstPort    uint16 `json:"DstPort,omitempty"`
-	TCPPayload []byte `json:"TCPPayload,omitempty"`
-	UDPPayload []byte `json:"UDPPayload,omitempty"`
+	Seq     uint32 `json:"Seq,omitempty"`
+	SrcPort uint16 `json:"SrcPort,omitempty"`
+	DstPort uint16 `json:"DstPort,omitempty"`
 	// Application
+	// 各层的 Payload 是逐层嵌套的同一份数据，只保留最内层一份，
+	// 否则单个报文会携带 4 份重复副本再经 base64 推送到界面。
 	ApplicationLayer   string `json:"ApplicationLayer,omitempty"`
 	ApplicationPayload []byte `json:"ApplicationPayload,omitempty"`
 }

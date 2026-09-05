@@ -3,6 +3,8 @@
 import {events} from '../models';
 import {models} from '../models';
 
+export function CertReady():Promise<boolean>;
+
 export function DisableProxy():Promise<events.Event>;
 
 export function EnableProxy():Promise<events.Event>;
@@ -15,11 +17,11 @@ export function GenerateCert():Promise<events.Event>;
 
 export function GetConfig():Promise<models.Config>;
 
+export function GetDataDir():Promise<string>;
+
 export function GetDevices():Promise<Array<models.Device>>;
 
 export function InstallCert():Promise<events.Event>;
-
-export function RunLoop():Promise<void>;
 
 export function SetConfig(arg1:string,arg2:models.Config):Promise<void>;
 

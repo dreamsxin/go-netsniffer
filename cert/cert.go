@@ -160,29 +160,18 @@ func WriteCertToFile(cert *x509.Certificate, certFilePath string) error {
 
 }
 
+// SaveBlockToFile 以 0600 权限写入 PEM 块，私钥不应被其他用户读取。
 func SaveBlockToFile(filename string, block *pem.Block) error {
-	outFile, err := os.Create(filename)
+	outFile, err := os.OpenFile(filename, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
 	}
 	defer outFile.Close()
 
-	err = pem.Encode(outFile, block)
-	if err != nil {
+	if err := pem.Encode(outFile, block); err != nil {
+		os.Remove(filename)
 		return err
 	}
 	return nil
 }
 
-func SaveToFile(filename string, data []byte) {
-	outFile, err := os.Create(filename)
-	if err != nil {
-		panic(err)
-	}
-	defer outFile.Close()
-
-	_, err = outFile.Write(data)
-	if err != nil {
-		panic(err)
-	}
-}

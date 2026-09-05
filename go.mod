@@ -8,7 +8,7 @@ require (
 	github.com/andybalholm/brotli v1.1.1
 	github.com/google/gopacket v1.1.19
 	github.com/google/martian/v3 v3.3.3
-	github.com/valyala/gozstd v1.21.2
+	github.com/klauspost/compress v1.17.9
 	github.com/wailsapp/wails/v2 v2.9.2
 	golang.org/x/sys v0.26.0
 )

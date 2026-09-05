@@ -2,7 +2,7 @@
 import { EventsOn } from '../wailsjs/runtime/runtime'
 import { ref, reactive, useTemplateRef, watch, onMounted, computed } from 'vue'
 import { ElNotification } from 'element-plus'
-import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture } from '../wailsjs/go/main/App'
+import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture, GetDataDir, CertReady } from '../wailsjs/go/main/App'
 
 const data = reactive({
   config: {
@@ -17,6 +17,8 @@ const data = reactive({
   rate: 0,
   devices: [],
   selectdevice: null,
+  dataDir: "",
+  certReady: false,
 })
 
 let mainheight = computed(() => data.windowHeight - data.headerheight)
@@ -44,8 +46,18 @@ onMounted(() => {
   GetConfig().then(config => {
     data.config = config
   })
+  refreshCertStatus()
+  GetDataDir().then(dir => {
+    data.dataDir = dir
+  })
   window.addEventListener('resize', debounce(getWindowInfo, 200));// 监听窗口大小变化
 })
+
+function refreshCertStatus() {
+  CertReady().then(ready => {
+    data.certReady = ready
+  })
+}
 
 const activeName = ref('HTTP')
 
@@ -75,6 +87,16 @@ EventsOn("Packet", function (v) {
 
 
 
+// 表格数据只保留最近的记录，长时间抓包时无上限追加会耗尽 WebView 内存
+const MAX_ROWS = 5000
+
+function pushCapped(list, item) {
+  list.push(item)
+  if (list.length > MAX_ROWS) {
+    list.splice(0, list.length - MAX_ROWS)
+  }
+}
+
 const httpheaders = [
   { value: 'Date', text: '日期', width: 160, fixed: true },
   { value: 'HTTPPacketType', text: '类型', width: 80, fixed: true },
@@ -87,13 +109,12 @@ const httpheaders = [
 const httpTableData = reactive([
 ])
 EventsOn("HTTPPacket", function (v) {
-  console.log("HTTPPacket", v)
-  httpTableData.push(v)
+  pushCapped(httpTableData, v)
 });
 
 const tcpheaders = [
   { value: 'Date', text: '日期', width: 160, fixed: true },
-  { value: 'LayerType', text: '网络层', width: 80, fixed: true },
+  { value: 'ApplicationLayer', text: '应用层', width: 100, fixed: true },
   { value: 'SrcMAC', text: 'SrcMAC', width: 100, },
   { value: 'DstMAC', text: 'DstMAC', width: 100 },
   { value: 'SrcIP', text: 'SrcIP', width: 100, },
@@ -101,17 +122,18 @@ const tcpheaders = [
   { value: 'Protocol', text: '协议', width: 100 },
   { value: 'SrcPort', text: 'SrcPort', width: 100 },
   { value: 'DstPort', text: 'DstPort', width: 100 },
+  { value: 'Length', text: '长度', width: 80 },
 ];
 const tcpTableData = reactive([
 ])
 EventsOn("IPPacket", function (v) {
-  console.log("IPPacket", v)
-  tcpTableData.push(v)
+  pushCapped(tcpTableData, v)
 });
 
 
 function generateCert() {
   GenerateCert().then(err => {
+    refreshCertStatus()
     if (err == null) {
       ElNotification({
         title: 'Success',
@@ -173,7 +195,7 @@ function getDevices() {
 }
 
 function startProxy() {
-  StartProxy(data.port, data.autoProxy).then(err => {
+  StartProxy().then(err => {
     if (err == null) {
       ElNotification({
         title: 'Success',
@@ -208,8 +230,29 @@ function stopProxy() {
   })
 }
 
+// ApplicationPayload 经 JSON 传输后是 base64 字符串，这里解成可读文本
+function formatPayload(b64) {
+  if (!b64) {
+    return "[no data]"
+  }
+  try {
+    const bin = atob(b64)
+    let text = ""
+    for (let i = 0; i < bin.length; i++) {
+      const code = bin.charCodeAt(i)
+      text += (code === 9 || code === 10 || code === 13 || (code >= 32 && code < 127))
+        ? bin[i]
+        : "."
+    }
+    return `${bin.length} bytes\n${text}`
+  } catch (e) {
+    return "[decode error]"
+  }
+}
+
 function clear() {
   httpTableData.length = 0;
+  tcpTableData.length = 0;
 }
 
 function test() {
@@ -301,7 +344,18 @@ function stopIPCapture() {
               @change="handleChange('HTTP.FilterHost')" class="item">
               <template #prepend>Host</template>
             </el-input>
+            <el-input v-model="data.config.HTTP.UpstreamProxy" style="max-width: 240px"
+              placeholder="http://127.0.0.1:7890" @change="handleChange('HTTP.UpstreamProxy')" class="item">
+              <template #prepend>上游代理</template>
+            </el-input>
           </el-space>
+        </el-col>
+      </el-row>
+      <el-row style="margin-bottom:5px">
+        <el-col>
+          <el-text size="small" type="info">
+            {{ data.certReady ? '证书已生成' : '证书未生成，请先点击“生成证书”并“安装证书”' }}，数据目录：{{ data.dataDir }}
+          </el-text>
         </el-col>
       </el-row>
       <EasyDataTable :headers="httpheaders" :items="httpTableData" :table-height="httpheight">
@@ -358,8 +412,8 @@ function stopIPCapture() {
       <EasyDataTable :headers="tcpheaders" :items="tcpTableData" :table-height="httpheight">
         <template #expand="item">
           <div style="padding: 15px">
-            <p>LayerType: {{ item.ApplicationLayer }}</p>
-            <pre>{{ item.Payload }}</pre>
+            <p>ApplicationLayer: {{ item.ApplicationLayer || '-' }}</p>
+            <pre>{{ formatPayload(item.ApplicationPayload) }}</pre>
           </div>
         </template>
       </EasyDataTable>

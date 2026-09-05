@@ -69,6 +69,8 @@ export namespace models {
 	    Filter: boolean;
 	    FilterHost: string;
 	    ResourceTypes: string[];
+	    MaxBodySize: number;
+	    UpstreamProxy: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new HTTP(source);
@@ -83,6 +85,8 @@ export namespace models {
 	        this.Filter = source["Filter"];
 	        this.FilterHost = source["FilterHost"];
 	        this.ResourceTypes = source["ResourceTypes"];
+	        this.MaxBodySize = source["MaxBodySize"];
+	        this.UpstreamProxy = source["UpstreamProxy"];
 	    }
 	}
 	export class Config {
