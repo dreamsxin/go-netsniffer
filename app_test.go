@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/dreamsxin/go-netsniffer/models"
-	"github.com/google/gopacket"
-	"github.com/google/gopacket/layers"
+	"github.com/gopacket/gopacket"
+	"github.com/gopacket/gopacket/layers"
 )
 
 func TestMatchHTTPFilter(t *testing.T) {

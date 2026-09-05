@@ -1,28 +1,37 @@
 package proxy
 
 import (
-	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/dreamsxin/go-netsniffer/cert"
 	"github.com/dreamsxin/go-netsniffer/paths"
-	"github.com/google/martian/v3"
-	"github.com/google/martian/v3/mitm"
+	"github.com/elazarl/goproxy"
 )
 
-// 定义接口
-type ServeHandler interface {
-	ModifyRequest(req *http.Request) error
-	ModifyResponse(res *http.Response) error
+// Handler 接收代理观察到的流量。实现必须是非阻塞的，
+// 任何耗时操作都会直接拖慢被代理的请求。
+type Handler interface {
+	// Request 记录一个请求，id 用于与响应配对
+	Request(req *http.Request, id string)
+	// Response 记录一个响应及其往返耗时
+	Response(resp *http.Response, id string, duration time.Duration)
+	// Tunnel 记录一个按规则未解密、仅做转发的连接
+	Tunnel(host, id string)
+}
+
+// Rules 决定某个域名的 HTTPS 是否需要解密。
+type Rules interface {
+	ShouldMITM(host string) bool
 }
 
 // Options 控制代理的网络行为，零值表示使用默认值。
@@ -38,12 +47,16 @@ const (
 	tlsHandshakeTimeout = 30 * time.Second
 	responseHeadTimeout = 60 * time.Second
 	idleConnTimeout     = 30 * time.Second
-	proxyConnTimeout    = 5 * time.Minute
-	certValidity        = 365 * 24 * time.Hour
+	readHeaderTimeout   = 30 * time.Second
+	// 根证书要手工安装到系统，有效期给足 10 年，避免用户每年重装一次
+	certValidity = 10 * 365 * 24 * time.Hour
 )
 
-func keyPath() string { return paths.KeyFile() }
-func crtPath() string { return paths.CertFile() }
+// 证书路径以变量形式暴露，便于测试替换为临时目录
+var (
+	keyPath = paths.KeyFile
+	crtPath = paths.CertFile
+)
 
 // CertExists 判断根证书与私钥是否都已生成，供界面展示状态。
 func CertExists() bool {
@@ -54,46 +67,178 @@ func CertExists() bool {
 	return err == nil
 }
 
-func New(authorityName string, handler ServeHandler, opts Options) (*martian.Proxy, error) {
-	crt, privKey, err := loadAuthority()
+// Server 把 goproxy 与承载它的 http.Server 组合起来，
+// 并跟踪未解密的隧道连接，以便停止服务时能一并断开。
+type Server struct {
+	proxy *goproxy.ProxyHttpServer
+	http  *http.Server
+
+	mu      sync.Mutex
+	closed  bool
+	tunnels map[net.Conn]struct{}
+}
+
+func New(authorityName string, h Handler, rules Rules, opts Options) (*Server, error) {
+	ca, err := loadCA()
 	if err != nil {
 		return nil, err
 	}
 
-	if time.Now().After(crt.NotAfter) {
-		return nil, fmt.Errorf("根证书已于 %s 过期，请重新生成并安装证书", crt.NotAfter.Format(time.DateOnly))
+	gp := goproxy.NewProxyHttpServer()
+	gp.Verbose = false
+	gp.Tr = newTransport()
+	// 缓存按域名签发的证书，否则每个新域名都要做一次 RSA 签名
+	gp.CertStore = &certCache{}
+
+	s := &Server{
+		proxy:   gp,
+		tunnels: make(map[net.Conn]struct{}),
+	}
+	s.http = &http.Server{
+		Handler:           gp,
+		ReadHeaderTimeout: readHeaderTimeout,
 	}
 
-	mitmConf, err := mitm.NewConfig(crt, privKey)
-	if err != nil {
-		return nil, fmt.Errorf("初始化证书生成失败: %w", err)
-	}
-	mitmConf.SetOrganization(authorityName)
-	mitmConf.SetValidity(certValidity) // 设置证书有效期为1年
-
-	proxy := martian.NewProxy()
-	proxy.SetMITM(mitmConf)
-	proxy.SetRequestModifier(handler)
-	proxy.SetResponseModifier(handler)
-	// 没有超时时，卡住的上游连接会一直占用 goroutine 与文件描述符
-	proxy.SetTimeout(proxyConnTimeout)
-	proxy.SetRoundTripper(newTransport())
-
-	if err := applyUpstreamProxy(proxy, opts); err != nil {
-		proxy.Close()
+	if err := s.setUpstream(opts); err != nil {
 		return nil, err
 	}
 
-	return proxy, nil
+	tlsConfig := goproxy.TLSConfigFromCA(ca)
+	mitm := &goproxy.ConnectAction{Action: goproxy.ConnectMitm, TLSConfig: tlsConfig}
+
+	// goproxy 原生支持在 CONNECT 阶段决定是否解密：
+	// 命中规则的走 MITM，其余原样转发，避免破坏做了证书固定的客户端。
+	gp.OnRequest().HandleConnectFunc(func(host string, ctx *goproxy.ProxyCtx) (*goproxy.ConnectAction, string) {
+		if rules.ShouldMITM(host) {
+			return mitm, host
+		}
+		h.Tunnel(host, sessionID(ctx))
+		return &goproxy.ConnectAction{Action: goproxy.ConnectAccept}, host
+	})
+
+	gp.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
+		ctx.UserData = time.Now()
+		h.Request(req, sessionID(ctx))
+		return req, nil
+	})
+
+	gp.OnResponse().DoFunc(func(resp *http.Response, ctx *goproxy.ProxyCtx) *http.Response {
+		var duration time.Duration
+		if start, ok := ctx.UserData.(time.Time); ok {
+			duration = time.Since(start)
+		}
+		h.Response(resp, sessionID(ctx), duration)
+		return resp
+	})
+
+	return s, nil
+}
+
+// sessionID 用 goproxy 的会话号把请求与响应关联起来。
+func sessionID(ctx *goproxy.ProxyCtx) string {
+	if ctx == nil {
+		return ""
+	}
+	return strconv.FormatInt(ctx.Session, 10)
+}
+
+func (s *Server) Serve(l net.Listener) error {
+	return s.http.Serve(l)
+}
+
+// Close 关闭监听与所有在途连接，包括被 goproxy 劫持的隧道连接。
+// http.Server.Close 不会处理已劫持的连接，所以隧道要自己跟踪并关闭。
+func (s *Server) Close() error {
+	s.mu.Lock()
+	s.closed = true
+	tunnels := make([]net.Conn, 0, len(s.tunnels))
+	for c := range s.tunnels {
+		tunnels = append(tunnels, c)
+	}
+	s.tunnels = make(map[net.Conn]struct{})
+	s.mu.Unlock()
+
+	err := s.http.Close()
+	for _, c := range tunnels {
+		c.Close()
+	}
+	return err
+}
+
+func (s *Server) trackTunnel(c net.Conn) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return false
+	}
+	s.tunnels[c] = struct{}{}
+	return true
+}
+
+func (s *Server) untrackTunnel(c net.Conn) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.tunnels, c)
+}
+
+// trackedConn 在关闭时把自己从隧道集合里摘掉，避免集合无限增长。
+type trackedConn struct {
+	net.Conn
+	srv  *Server
+	once sync.Once
+}
+
+func (c *trackedConn) Close() error {
+	c.once.Do(func() { c.srv.untrackTunnel(c.Conn) })
+	return c.Conn.Close()
+}
+
+func (s *Server) setUpstream(opts Options) error {
+	dialer := &net.Dialer{Timeout: dialTimeout, KeepAlive: 30 * time.Second}
+	base := func(network, addr string) (net.Conn, error) {
+		return dialer.Dial(network, addr)
+	}
+
+	if opts.UpstreamProxy != "" {
+		u, err := url.Parse(opts.UpstreamProxy)
+		if err != nil {
+			return fmt.Errorf("上游代理地址无效: %w", err)
+		}
+		if u.Host == "" {
+			return errors.New("上游代理地址无效: 缺少主机与端口")
+		}
+		// 上游代理指向自身会导致请求无限自环
+		if opts.ListenPort > 0 {
+			if _, port, err := net.SplitHostPort(u.Host); err == nil &&
+				port == strconv.Itoa(opts.ListenPort) {
+				return errors.New("上游代理不能指向本程序自身的监听端口")
+			}
+		}
+		s.proxy.Tr.Proxy = http.ProxyURL(u)
+		base = s.proxy.NewConnectDialToProxy(opts.UpstreamProxy)
+	}
+
+	s.proxy.ConnectDial = func(network, addr string) (net.Conn, error) {
+		c, err := base(network, addr)
+		if err != nil {
+			return nil, err
+		}
+		if !s.trackTunnel(c) {
+			c.Close()
+			return nil, errors.New("代理服务已停止")
+		}
+		return &trackedConn{Conn: c, srv: s}, nil
+	}
+	return nil
 }
 
 func newTransport() *http.Transport {
 	return &http.Transport{
-		Proxy: nil, // 上游代理由 martian 的 DownstreamProxy 统一控制
 		DialContext: (&net.Dialer{
 			Timeout:   dialTimeout,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
+		// MITM 代理不校验上游证书，否则证书链有瑕疵的站点会整体不可访问
 		TLSClientConfig:       &tls.Config{InsecureSkipVerify: true},
 		TLSHandshakeTimeout:   tlsHandshakeTimeout,
 		ResponseHeaderTimeout: responseHeadTimeout,
@@ -104,81 +249,50 @@ func newTransport() *http.Transport {
 	}
 }
 
-func applyUpstreamProxy(proxy *martian.Proxy, opts Options) error {
-	if opts.UpstreamProxy == "" {
-		return nil
-	}
-	u, err := url.Parse(opts.UpstreamProxy)
-	if err != nil {
-		return fmt.Errorf("上游代理地址无效: %w", err)
-	}
-	if u.Host == "" {
-		return errors.New("上游代理地址无效: 缺少主机与端口")
-	}
-	// 上游代理指向自身会导致请求无限自环
-	if opts.ListenPort > 0 {
-		if _, port, err := net.SplitHostPort(u.Host); err == nil &&
-			port == fmt.Sprintf("%d", opts.ListenPort) {
-			return errors.New("上游代理不能指向本程序自身的监听端口")
-		}
-	}
-	proxy.SetDownstreamProxy(u)
-	return nil
+// certCache 实现 goproxy.CertStorage，按域名缓存已签发的证书。
+type certCache struct {
+	m sync.Map
 }
 
-func loadAuthority() (*x509.Certificate, *rsa.PrivateKey, error) {
+func (c *certCache) Fetch(hostname string, gen func() (*tls.Certificate, error)) (*tls.Certificate, error) {
+	if v, ok := c.m.Load(hostname); ok {
+		return v.(*tls.Certificate), nil
+	}
+	crt, err := gen()
+	if err != nil {
+		return nil, err
+	}
+	actual, _ := c.m.LoadOrStore(hostname, crt)
+	return actual.(*tls.Certificate), nil
+}
+
+func loadCA() (*tls.Certificate, error) {
 	if _, err := os.Stat(crtPath()); err != nil {
-		return nil, nil, errors.New("根证书不存在，请先生成并安装证书")
+		return nil, errors.New("根证书不存在，请先生成并安装证书")
 	}
 
-	keyBytes, err := os.ReadFile(keyPath())
+	ca, err := tls.LoadX509KeyPair(crtPath(), keyPath())
 	if err != nil {
-		return nil, nil, fmt.Errorf("私钥读取失败: %w", err)
+		return nil, fmt.Errorf("证书加载失败，请重新生成证书: %w", err)
 	}
-	block, _ := pem.Decode(keyBytes)
-	if block == nil {
-		return nil, nil, errors.New("私钥解析失败: 无效的 PEM 数据，请重新生成证书")
-	}
-	if block.Type != "RSA PRIVATE KEY" {
-		return nil, nil, fmt.Errorf("私钥解析失败: 不支持的类型 %s", block.Type)
-	}
-	privKey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
-	if err != nil {
-		return nil, nil, fmt.Errorf("私钥解析失败: %w", err)
+	if len(ca.Certificate) == 0 {
+		return nil, errors.New("证书加载失败: 内容为空，请重新生成证书")
 	}
 
-	crtBytes, err := os.ReadFile(crtPath())
+	leaf, err := x509.ParseCertificate(ca.Certificate[0])
 	if err != nil {
-		return nil, nil, fmt.Errorf("证书读取失败: %w", err)
+		return nil, fmt.Errorf("证书解析失败: %w", err)
 	}
-	block, _ = pem.Decode(crtBytes)
-	if block == nil {
-		return nil, nil, errors.New("证书解析失败: 无效的 PEM 数据，请重新生成证书")
+	if time.Now().After(leaf.NotAfter) {
+		return nil, fmt.Errorf("根证书已于 %s 过期，请重新生成并安装证书",
+			leaf.NotAfter.Format(time.DateOnly))
 	}
-	if block.Type != "CERTIFICATE" {
-		return nil, nil, fmt.Errorf("证书解析失败: 不支持的类型 %s", block.Type)
-	}
-	crt, err := x509.ParseCertificate(block.Bytes)
-	if err != nil {
-		return nil, nil, fmt.Errorf("证书解析失败: %w", err)
-	}
-	return crt, privKey, nil
+	ca.Leaf = leaf
+	return &ca, nil
 }
 
 func GenerateCert(authorityName string) error {
-	crt, privKey, err := mitm.NewAuthority(authorityName, fmt.Sprintf("The %s Company", authorityName), certValidity)
-	if err != nil {
-		return fmt.Errorf("证书生成失败: %w", err)
-	}
-
-	if err = cert.SaveBlockToFile(keyPath(), &pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(privKey)}); err != nil {
-		return fmt.Errorf("证书生成失败: %w", err)
-	}
-
-	if err = cert.WriteCertToFile(crt, crtPath()); err != nil {
-		return fmt.Errorf("证书生成失败: %w", err)
-	}
-	return nil
+	return cert.GenerateCA(authorityName, crtPath(), keyPath(), certValidity)
 }
 
 func InstallCert(authorityName string) error {

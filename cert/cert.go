@@ -6,6 +6,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"fmt"
 	"math/big"
 	"net"
 	"os"
@@ -16,6 +17,60 @@ const (
 	RootCommonName         = "Local Root CA"
 	IntermediateCommonName = "Local Intermediate CA"
 )
+
+// GenerateCA 生成用于 MITM 的自签根证书并落盘。
+// 证书用于本机安装，有效期给足，避免用户每年都要重新生成并安装一次。
+func GenerateCA(commonName, certPath, keyPath string, validity time.Duration) error {
+	priv, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return fmt.Errorf("生成私钥失败: %w", err)
+	}
+
+	// 序列号必须随机，固定值会让同名证书在系统存储中相互覆盖
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
+	if err != nil {
+		return fmt.Errorf("生成序列号失败: %w", err)
+	}
+
+	template := x509.Certificate{
+		SerialNumber: serial,
+		Subject: pkix.Name{
+			CommonName:   commonName,
+			Organization: []string{commonName},
+		},
+		// 提前一天生效，容忍客户端时钟偏差
+		NotBefore:             time.Now().Add(-24 * time.Hour),
+		NotAfter:              time.Now().Add(validity),
+		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth, x509.ExtKeyUsageClientAuth},
+		BasicConstraintsValid: true,
+		IsCA:                  true,
+		MaxPathLen:            1,
+	}
+
+	der, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
+	if err != nil {
+		return fmt.Errorf("签发根证书失败: %w", err)
+	}
+	crt, err := x509.ParseCertificate(der)
+	if err != nil {
+		return fmt.Errorf("解析根证书失败: %w", err)
+	}
+
+	// 先写私钥再写证书：证书是 CertExists 的判断依据，
+	// 中途失败时不会出现"有证书但没私钥"的半成品状态
+	if err := SaveBlockToFile(keyPath, &pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(priv),
+	}); err != nil {
+		return fmt.Errorf("写入私钥失败: %w", err)
+	}
+	if err := WriteCertToFile(crt, certPath); err != nil {
+		return fmt.Errorf("写入根证书失败: %w", err)
+	}
+	return nil
+}
+
 
 // 签发证书
 func GrantCert(template, parent *x509.Certificate, publicKey *rsa.PublicKey, privateKey *rsa.PrivateKey) (*x509.Certificate, []byte, error) {

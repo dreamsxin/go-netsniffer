@@ -3,27 +3,29 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
+
 	"github.com/dreamsxin/go-netsniffer/events"
 	"github.com/dreamsxin/go-netsniffer/models"
 	"github.com/dreamsxin/go-netsniffer/paths"
 	"github.com/dreamsxin/go-netsniffer/proxy"
 	"github.com/dreamsxin/go-netsniffer/rule"
-	"github.com/google/gopacket"
-	"github.com/google/martian/v3"
+	"github.com/gopacket/gopacket"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/dreamsxin/go-netsniffer/proxy/handler"
-	"github.com/google/gopacket/layers"
-	"github.com/google/gopacket/pcap"
+	"github.com/gopacket/gopacket/layers"
+	"github.com/gopacket/gopacket/pcap"
 )
 
 const authorityName string = "GoNetSniffer Proxy Authority"
@@ -47,9 +49,8 @@ type App struct {
 	rules *rule.Set
 
 	lock      sync.Mutex
-	serve     *martian.Proxy
+	serve     *proxy.Server
 	listener  net.Listener
-	proxyStop context.CancelFunc
 	tcphandle *pcap.Handle
 
 	dataChan chan *models.Packet
@@ -74,9 +75,6 @@ type packetSink struct{ app *App }
 
 func (s packetSink) Emit(packet *models.Packet) { s.app.emit(packet) }
 func (s packetSink) MaxBodySize() int64         { return s.app.maxBodySize() }
-func (s packetSink) ShouldMITM(host string) bool {
-	return s.app.rules.ShouldMITM(host)
-}
 
 // emit 非阻塞投递报文。抓包速度可能远快于界面消费速度，
 // 阻塞在这里会直接拖慢甚至挂死用户的网络请求，因此队列满时丢弃并计数。
@@ -425,21 +423,17 @@ func (a *App) StartProxy() *events.Event {
 	}
 
 	cfg := a.snapshot()
-	// 代理停止时取消该 ctx，断开按规则未解密的长连接隧道
-	proxyCtx, proxyStop := context.WithCancel(a.ctx)
-	serve, err := proxy.New(authorityName, handler.NewRequestLogger(proxyCtx, packetSink{app: a}), proxy.Options{
+	serve, err := proxy.New(authorityName, handler.NewRequestLogger(packetSink{app: a}), a.rules, proxy.Options{
 		UpstreamProxy: cfg.HTTP.UpstreamProxy,
 		ListenPort:    cfg.HTTP.Port,
 	})
 	if err != nil {
-		proxyStop()
 		return &events.Event{Type: events.ERROR, Code: 1, Message: err.Error()}
 	}
 
 	addr := fmt.Sprintf("127.0.0.1:%d", cfg.HTTP.Port)
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
-		proxyStop()
 		serve.Close()
 		return &events.Event{Type: events.ERROR, Code: 1,
 			Message: fmt.Sprintf("监听 %s 失败（端口可能已被占用）: %s", addr, err.Error())}
@@ -447,7 +441,6 @@ func (a *App) StartProxy() *events.Event {
 
 	if cfg.HTTP.AutoProxy {
 		if err := proxy.EnableProxy(cfg.HTTP.Port); err != nil {
-			proxyStop()
 			l.Close()
 			serve.Close()
 			return &events.Event{Type: events.ERROR, Code: 1,
@@ -457,7 +450,6 @@ func (a *App) StartProxy() *events.Event {
 
 	a.serve = serve
 	a.listener = l
-	a.proxyStop = proxyStop
 	a.updateConfig(func(c *models.Config) { c.HTTP.Status = statusRunning })
 
 	a.safeGo("代理服务", func() {
@@ -469,14 +461,12 @@ func (a *App) StartProxy() *events.Event {
 		if !stoppedByUser {
 			a.serve = nil
 			a.listener = nil
-			a.proxyStop = nil
-			proxyStop()
 			a.updateConfig(func(c *models.Config) { c.HTTP.Status = statusStopped })
 		}
 		a.lock.Unlock()
 
-		// 主动停止时 Serve 会返回连接关闭错误，不应报给用户
-		if err != nil && !stoppedByUser {
+		// 主动停止时 Serve 会返回 ErrServerClosed，不应报给用户
+		if err != nil && !errors.Is(err, http.ErrServerClosed) && !stoppedByUser {
 			a.FireErrorEvent(1, fmt.Sprintf("代理服务已停止: %s", err.Error()))
 		}
 	})
@@ -486,8 +476,8 @@ func (a *App) StartProxy() *events.Event {
 
 func (a *App) StopProxy() *events.Event {
 	a.lock.Lock()
-	serve, listener, proxyStop := a.serve, a.listener, a.proxyStop
-	a.serve, a.listener, a.proxyStop = nil, nil, nil
+	serve, listener := a.serve, a.listener
+	a.serve, a.listener = nil, nil
 	a.lock.Unlock()
 
 	if serve == nil {
@@ -495,10 +485,7 @@ func (a *App) StopProxy() *events.Event {
 	}
 
 	a.updateConfig(func(c *models.Config) { c.HTTP.Status = statusStopped })
-	// 先断开隧道，再关代理与监听
-	if proxyStop != nil {
-		proxyStop()
-	}
+	// Close 会同时断开监听、在途请求与未解密的隧道连接
 	serve.Close()
 	if listener != nil {
 		listener.Close()
