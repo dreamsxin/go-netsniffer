@@ -81,35 +81,40 @@ EventsOn("Test", function (v) {
 });
 
 
-EventsOn("Packet", function (v) {
-  console.log("Packet", v)
-});
-
-
 
 // 表格数据只保留最近的记录，长时间抓包时无上限追加会耗尽 WebView 内存
 const MAX_ROWS = 5000
 
-function pushCapped(list, item) {
-  list.push(item)
+// 后端按 100ms 时间窗聚合成批推送，减少 IPC 调用次数
+function pushBatch(list, items) {
+  if (!items || items.length === 0) {
+    return
+  }
+  list.push(...items)
   if (list.length > MAX_ROWS) {
     list.splice(0, list.length - MAX_ROWS)
   }
 }
 
+const packetTypeText = { 0: '请求', 1: '响应', 2: '隧道' }
+
 const httpheaders = [
   { value: 'Date', text: '日期', width: 160, fixed: true },
-  { value: 'HTTPPacketType', text: '类型', width: 80, fixed: true },
-  { value: 'Method', text: '方式', width: 100, fixed: true },
-  { value: 'Host', text: '域名', width: 250 },
-  { value: 'Path', text: '地址', width: 250 },
-  { value: 'ContentType', text: '内容类型', width: 200 },
-  { value: 'StatusCode', text: '状态', width: 200 }
+  { value: 'TypeText', text: '类型', width: 80, fixed: true },
+  { value: 'Method', text: '方式', width: 90, fixed: true },
+  { value: 'Host', text: '域名', width: 220 },
+  { value: 'Path', text: '地址', width: 240 },
+  { value: 'ContentType', text: '内容类型', width: 180 },
+  { value: 'StatusCode', text: '状态', width: 90 },
+  { value: 'Duration', text: '耗时(ms)', width: 100 }
 ];
 const httpTableData = reactive([
 ])
-EventsOn("HTTPPacket", function (v) {
-  pushCapped(httpTableData, v)
+EventsOn("HTTPPackets", function (list) {
+  for (const p of list) {
+    p.TypeText = packetTypeText[p.HTTPPacketType ?? 0] ?? '-'
+  }
+  pushBatch(httpTableData, list)
 });
 
 const tcpheaders = [
@@ -126,8 +131,8 @@ const tcpheaders = [
 ];
 const tcpTableData = reactive([
 ])
-EventsOn("IPPacket", function (v) {
-  pushCapped(tcpTableData, v)
+EventsOn("IPPackets", function (list) {
+  pushBatch(tcpTableData, list)
 });
 
 
@@ -349,6 +354,23 @@ function stopIPCapture() {
               <template #prepend>上游代理</template>
             </el-input>
           </el-space>
+        </el-col>
+      </el-row>
+      <el-row style="margin-bottom:5px">
+        <el-col>
+          <el-collapse>
+            <el-collapse-item name="rule">
+              <template #title>
+                <span>解密规则（未列入的域名只做转发，不解密）</span>
+              </template>
+              <el-input v-model="data.config.HTTP.Rule" type="textarea" :rows="8"
+                placeholder="* 全部匹配；*.a.com 匹配域名及子域；!前缀 表示排除；# 为注释"
+                @change="handleChange('HTTP.Rule')" />
+              <el-text size="small" type="info">
+                做了证书固定的客户端（微信、部分银行 App）必须用 ! 排除，否则它们会无法联网。规则修改后立即生效，无需重启服务。
+              </el-text>
+            </el-collapse-item>
+          </el-collapse>
         </el-col>
       </el-row>
       <el-row style="margin-bottom:5px">

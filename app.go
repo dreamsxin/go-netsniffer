@@ -16,6 +16,7 @@ import (
 	"github.com/dreamsxin/go-netsniffer/models"
 	"github.com/dreamsxin/go-netsniffer/paths"
 	"github.com/dreamsxin/go-netsniffer/proxy"
+	"github.com/dreamsxin/go-netsniffer/rule"
 	"github.com/google/gopacket"
 	"github.com/google/martian/v3"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -42,9 +43,13 @@ type App struct {
 	configMu sync.RWMutex
 	config   models.Config
 
+	// rules 决定哪些域名需要解密，自身并发安全，支持热更新
+	rules *rule.Set
+
 	lock      sync.Mutex
 	serve     *martian.Proxy
 	listener  net.Listener
+	proxyStop context.CancelFunc
 	tcphandle *pcap.Handle
 
 	dataChan chan *models.Packet
@@ -55,8 +60,10 @@ type App struct {
 
 // NewApp creates a new App application struct
 func NewApp() *App {
+	cfg := models.DefaultConfig()
 	return &App{
-		config:   models.DefaultConfig(),
+		config:   cfg,
+		rules:    rule.New(cfg.HTTP.Rule),
 		dataChan: make(chan *models.Packet, 4096),
 	}
 }
@@ -67,6 +74,9 @@ type packetSink struct{ app *App }
 
 func (s packetSink) Emit(packet *models.Packet) { s.app.emit(packet) }
 func (s packetSink) MaxBodySize() int64         { return s.app.maxBodySize() }
+func (s packetSink) ShouldMITM(host string) bool {
+	return s.app.rules.ShouldMITM(host)
+}
 
 // emit 非阻塞投递报文。抓包速度可能远快于界面消费速度，
 // 阻塞在这里会直接拖慢甚至挂死用户的网络请求，因此队列满时丢弃并计数。
@@ -113,6 +123,13 @@ func (a *App) safeGo(name string, fn func()) {
 	}()
 }
 
+// 批量推送参数：高频抓包时每包一次 EventsEmit 会让 WebView 的 IPC 与主线程成为瓶颈，
+// 因此按时间窗聚合，攒够一批或到点再推。
+const (
+	flushInterval = 100 * time.Millisecond
+	flushMaxBatch = 200
+)
+
 func (a *App) runLoop() {
 	var (
 		logFile *os.File
@@ -126,12 +143,34 @@ func (a *App) runLoop() {
 
 	dropTicker := time.NewTicker(5 * time.Second)
 	defer dropTicker.Stop()
-	var reportedDrops int64
+	flushTicker := time.NewTicker(flushInterval)
+	defer flushTicker.Stop()
+
+	var (
+		reportedDrops int64
+		httpBatch     []models.HTTPPacket
+		ipBatch       []models.IPPacket
+	)
+
+	flush := func() {
+		if len(httpBatch) > 0 {
+			runtime.EventsEmit(a.ctx, "HTTPPackets", httpBatch)
+			httpBatch = nil
+		}
+		if len(ipBatch) > 0 {
+			runtime.EventsEmit(a.ctx, "IPPackets", ipBatch)
+			ipBatch = nil
+		}
+	}
+	defer flush()
 
 	for {
 		select {
 		case <-a.ctx.Done():
 			return
+
+		case <-flushTicker.C:
+			flush()
 
 		case <-dropTicker.C:
 			if d := a.dropped.Load(); d > reportedDrops {
@@ -151,20 +190,26 @@ func (a *App) runLoop() {
 				if !matchHTTPFilter(cfg.HTTP, packet.HTTP) {
 					continue
 				}
-				runtime.EventsEmit(a.ctx, "HTTPPacket", packet.HTTP)
+				httpBatch = append(httpBatch, packet.HTTP)
 				if cfg.HTTP.SaveLogFile {
 					logFile, logDate = a.appendPacketLog(logFile, logDate, packet.HTTP)
 				}
 			case models.PacketType_IP:
-				runtime.EventsEmit(a.ctx, "IPPacket", packet.IP)
-			default:
-				runtime.EventsEmit(a.ctx, "Packet", packet)
+				ipBatch = append(ipBatch, packet.IP)
+			}
+
+			if len(httpBatch)+len(ipBatch) >= flushMaxBatch {
+				flush()
 			}
 		}
 	}
 }
 
 func matchHTTPFilter(cfg models.HTTP, packet models.HTTPPacket) bool {
+	// 隧道记录用于告知用户该域名按规则未解密，不受内容类型过滤影响
+	if packet.HTTPPacketType == models.HTTPPacketType_TUNNEL {
+		return cfg.FilterHost == "" || strings.Contains(packet.Host, cfg.FilterHost)
+	}
 	if cfg.FilterHost != "" && !strings.Contains(packet.Host, cfg.FilterHost) {
 		return false
 	}
@@ -231,6 +276,8 @@ func (a *App) loadConfig() {
 	a.configMu.Lock()
 	a.config = cfg
 	a.configMu.Unlock()
+
+	a.rules.Load(cfg.HTTP.Rule)
 }
 
 func (a *App) saveConfig() {
@@ -301,6 +348,9 @@ func (a *App) SetConfig(field string, config models.Config) {
 	config.HTTP.Status, config.IP.Status = httpStatus, ipStatus
 	a.config = config
 	a.configMu.Unlock()
+
+	// 规则热更新，无需重启代理
+	a.rules.Load(config.HTTP.Rule)
 
 	if field == "HTTP.AutoProxy" {
 		if config.HTTP.AutoProxy {
@@ -375,17 +425,21 @@ func (a *App) StartProxy() *events.Event {
 	}
 
 	cfg := a.snapshot()
-	serve, err := proxy.New(authorityName, handler.NewRequestLogger(packetSink{app: a}), proxy.Options{
+	// 代理停止时取消该 ctx，断开按规则未解密的长连接隧道
+	proxyCtx, proxyStop := context.WithCancel(a.ctx)
+	serve, err := proxy.New(authorityName, handler.NewRequestLogger(proxyCtx, packetSink{app: a}), proxy.Options{
 		UpstreamProxy: cfg.HTTP.UpstreamProxy,
 		ListenPort:    cfg.HTTP.Port,
 	})
 	if err != nil {
+		proxyStop()
 		return &events.Event{Type: events.ERROR, Code: 1, Message: err.Error()}
 	}
 
 	addr := fmt.Sprintf("127.0.0.1:%d", cfg.HTTP.Port)
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
+		proxyStop()
 		serve.Close()
 		return &events.Event{Type: events.ERROR, Code: 1,
 			Message: fmt.Sprintf("监听 %s 失败（端口可能已被占用）: %s", addr, err.Error())}
@@ -393,6 +447,7 @@ func (a *App) StartProxy() *events.Event {
 
 	if cfg.HTTP.AutoProxy {
 		if err := proxy.EnableProxy(cfg.HTTP.Port); err != nil {
+			proxyStop()
 			l.Close()
 			serve.Close()
 			return &events.Event{Type: events.ERROR, Code: 1,
@@ -402,6 +457,7 @@ func (a *App) StartProxy() *events.Event {
 
 	a.serve = serve
 	a.listener = l
+	a.proxyStop = proxyStop
 	a.updateConfig(func(c *models.Config) { c.HTTP.Status = statusRunning })
 
 	a.safeGo("代理服务", func() {
@@ -413,6 +469,8 @@ func (a *App) StartProxy() *events.Event {
 		if !stoppedByUser {
 			a.serve = nil
 			a.listener = nil
+			a.proxyStop = nil
+			proxyStop()
 			a.updateConfig(func(c *models.Config) { c.HTTP.Status = statusStopped })
 		}
 		a.lock.Unlock()
@@ -428,8 +486,8 @@ func (a *App) StartProxy() *events.Event {
 
 func (a *App) StopProxy() *events.Event {
 	a.lock.Lock()
-	serve, listener := a.serve, a.listener
-	a.serve, a.listener = nil, nil
+	serve, listener, proxyStop := a.serve, a.listener, a.proxyStop
+	a.serve, a.listener, a.proxyStop = nil, nil, nil
 	a.lock.Unlock()
 
 	if serve == nil {
@@ -437,6 +495,10 @@ func (a *App) StopProxy() *events.Event {
 	}
 
 	a.updateConfig(func(c *models.Config) { c.HTTP.Status = statusStopped })
+	// 先断开隧道，再关代理与监听
+	if proxyStop != nil {
+		proxyStop()
+	}
 	serve.Close()
 	if listener != nil {
 		listener.Close()

@@ -71,6 +71,8 @@ export namespace models {
 	    ResourceTypes: string[];
 	    MaxBodySize: number;
 	    UpstreamProxy: string;
+	    Rule: string;
+
 	
 	    static createFrom(source: any = {}) {
 	        return new HTTP(source);
@@ -87,6 +89,7 @@ export namespace models {
 	        this.ResourceTypes = source["ResourceTypes"];
 	        this.MaxBodySize = source["MaxBodySize"];
 	        this.UpstreamProxy = source["UpstreamProxy"];
+	        this.Rule = source["Rule"];
 	    }
 	}
 	export class Config {

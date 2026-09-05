@@ -21,13 +21,17 @@ type Packet struct {
 type HTTPPacketType int
 
 const (
-	HTTPPacketType_REQUEST  HTTPPacketType = iota
-	HTTPPacketType_RESPONSE HTTPPacketType = iota
+	HTTPPacketType_REQUEST HTTPPacketType = iota
+	HTTPPacketType_RESPONSE
+	// HTTPPacketType_TUNNEL 表示按规则未解密、以隧道方式转发的 CONNECT 连接
+	HTTPPacketType_TUNNEL
 )
 
 type HTTPPacket struct {
-	Date           string
-	DateTime       time.Time
+	Date     string
+	DateTime time.Time
+	// ID 用于把请求与对应的响应配对，同一次往返的两条记录 ID 相同
+	ID             string         `json:"ID,omitempty"`
 	HTTPPacketType HTTPPacketType `json:"HTTPPacketType,omitempty"`
 	Proto          string         `json:"Proto,omitempty"`      // "HTTP/1.0"
 	ProtoMajor     int            `json:"ProtoMajor,omitempty"` // 1
@@ -42,6 +46,8 @@ type HTTPPacket struct {
 	StatusCode     int            `json:"StatusCode,omitempty"` // e.g. 200
 	ContentType    string         `json:"ContentType,omitempty"`
 	ContentLength  int64          `json:"ContentLength,omitempty"`
+	// Duration 为该次往返的耗时（毫秒），只在响应记录上有值
+	Duration int64 `json:"Duration,omitempty"`
 }
 
 type IPPacketType int

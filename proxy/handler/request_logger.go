@@ -3,6 +3,7 @@ package handler
 import (
 	"bytes"
 	"compress/gzip"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -10,9 +11,9 @@ import (
 	"strings"
 	"time"
 
-
 	"github.com/andybalholm/brotli"
 	"github.com/dreamsxin/go-netsniffer/models"
+	"github.com/google/martian/v3"
 	"github.com/klauspost/compress/zstd"
 )
 
@@ -23,21 +24,34 @@ type Sink interface {
 	Emit(*models.Packet)
 	// MaxBodySize 返回单个报文最多记录的 Body 字节数
 	MaxBodySize() int64
+	// ShouldMITM 返回该域名的 HTTPS 是否需要解密
+	ShouldMITM(host string) bool
 }
+
+// startTimeKey 是请求开始时间在 martian Context 中的键
+const startTimeKey = "netsniffer.start"
 
 // RequestLogger 记录经过代理的请求与响应
 type RequestLogger struct {
+	// ctx 在代理停止时取消，用于断开未解密的长连接隧道
+	ctx  context.Context
 	sink Sink
 }
 
-func NewRequestLogger(sink Sink) *RequestLogger {
-	return &RequestLogger{sink: sink}
+func NewRequestLogger(ctx context.Context, sink Sink) *RequestLogger {
+	return &RequestLogger{ctx: ctx, sink: sink}
 }
 
 // ModifyRequest 读取请求信息。
 // 任何错误都只影响记录本身，不能中断请求，否则用户的网络会因抓包失败而不可用。
 func (r *RequestLogger) ModifyRequest(req *http.Request) error {
 	if req == nil || req.URL == nil {
+		return nil
+	}
+
+	// CONNECT 决定后续是否解密，单独处理，不作为普通报文记录
+	if req.Method == http.MethodConnect {
+		r.handleConnect(req)
 		return nil
 	}
 
@@ -55,6 +69,12 @@ func (r *RequestLogger) ModifyRequest(req *http.Request) error {
 	data.HTTP.Header = req.Header
 	data.HTTP.ContentLength = req.ContentLength
 	data.HTTP.ContentType = req.Header.Get("Content-Type")
+
+	// 记录 ID 与开始时间，供响应侧配对并计算耗时
+	if mctx := martian.NewContext(req); mctx != nil {
+		data.HTTP.ID = mctx.ID()
+		mctx.Set(startTimeKey, time.Now())
+	}
 
 	if req.Body == nil || req.ContentLength == 0 {
 		data.HTTP.Body = "[no data]"
@@ -96,6 +116,16 @@ func (r *RequestLogger) ModifyResponse(resp *http.Response) error {
 		data.HTTP.Host = resp.Request.Host
 		data.HTTP.Path = resp.Request.URL.Path
 		data.HTTP.URL = resp.Request.URL.String()
+
+		// 与请求配对并计算这次往返的耗时
+		if mctx := martian.NewContext(resp.Request); mctx != nil {
+			data.HTTP.ID = mctx.ID()
+			if v, ok := mctx.Get(startTimeKey); ok {
+				if start, ok := v.(time.Time); ok {
+					data.HTTP.Duration = time.Since(start).Milliseconds()
+				}
+			}
+		}
 	}
 
 	contentType := data.HTTP.ContentType

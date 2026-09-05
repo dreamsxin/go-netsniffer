@@ -1,5 +1,18 @@
 package models
 
+// DefaultRule 默认解密全部域名，并排除已知会做证书固定的域名。
+// 这些域名一旦被解密，对应客户端会直接握手失败，表现为无法联网。
+const DefaultRule = `# 语法：* 全部匹配，*.a.com 匹配域名及子域，!前缀 表示排除，# 为注释
+# 顺序生效，后面的规则覆盖前面的
+*
+!*.weixin.qq.com
+!*.wechat.com
+!*.icloud.com
+!*.apple.com
+!*.windowsupdate.com
+`
+
+
 type HTTP struct {
 	Status        int // 0 未启动 1 启动中 2 已启动
 	Port          int
@@ -12,6 +25,9 @@ type HTTP struct {
 	MaxBodySize int64
 	// 上游代理，形如 http://127.0.0.1:7890，留空表示直连
 	UpstreamProxy string
+	// Rule 决定哪些域名的 HTTPS 需要解密，语法见 rule 包。
+	// 对做了证书固定的客户端必须排除，否则它们会直接握手失败。
+	Rule string
 }
 
 type IP struct {
@@ -36,6 +52,7 @@ func DefaultConfig() Config {
 			AutoProxy:   true,
 			SaveLogFile: false,
 			MaxBodySize: 1 << 20, // 1MB
+			Rule:        DefaultRule,
 		},
 		IP: IP{
 			Snaplen: 1600, // 覆盖标准以太网帧的完整长度
