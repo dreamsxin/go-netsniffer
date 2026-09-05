@@ -72,7 +72,6 @@ export namespace models {
 	    MaxBodySize: number;
 	    UpstreamProxy: string;
 	    Rule: string;
-
 	
 	    static createFrom(source: any = {}) {
 	        return new HTTP(source);
