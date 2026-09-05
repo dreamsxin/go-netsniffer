@@ -9,5 +9,9 @@
   "author": {
     "name": "dreamszhu",
     "email": "dreamsxin@qq.com"
+  },
+  "info": {
+    "productName": "Go-NetSniffer",
+    "productVersion": "0.2.0"
   }
 }
