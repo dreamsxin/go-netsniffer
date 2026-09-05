@@ -10,6 +10,14 @@ export function CertStatus() {
   return window['go']['main']['App']['CertStatus']();
 }
 
+export function DefaultDecryptRule() {
+  return window['go']['main']['App']['DefaultDecryptRule']();
+}
+
+export function DefaultRewriteRules() {
+  return window['go']['main']['App']['DefaultRewriteRules']();
+}
+
 export function DisableProxy() {
   return window['go']['main']['App']['DisableProxy']();
 }
@@ -50,12 +58,24 @@ export function GetDevices() {
   return window['go']['main']['App']['GetDevices']();
 }
 
+export function GetStatus() {
+  return window['go']['main']['App']['GetStatus']();
+}
+
 export function InstallCert() {
   return window['go']['main']['App']['InstallCert']();
 }
 
 export function Replay(arg1) {
   return window['go']['main']['App']['Replay'](arg1);
+}
+
+export function SaveDecryptRule(arg1) {
+  return window['go']['main']['App']['SaveDecryptRule'](arg1);
+}
+
+export function SaveRewriteRules(arg1) {
+  return window['go']['main']['App']['SaveRewriteRules'](arg1);
 }
 
 export function SetConfig(arg1, arg2) {

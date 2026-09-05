@@ -7,6 +7,10 @@ export function CertReady():Promise<boolean>;
 
 export function CertStatus():Promise<models.CertStatus>;
 
+export function DefaultDecryptRule():Promise<string>;
+
+export function DefaultRewriteRules():Promise<string>;
+
 export function DisableProxy():Promise<events.Event>;
 
 export function Download(arg1:models.HTTPPacket):Promise<events.Event>;
@@ -27,9 +31,15 @@ export function GetDataDir():Promise<string>;
 
 export function GetDevices():Promise<Array<models.Device>>;
 
+export function GetStatus():Promise<models.AppStatus>;
+
 export function InstallCert():Promise<events.Event>;
 
 export function Replay(arg1:models.ReplayRequest):Promise<events.Event>;
+
+export function SaveDecryptRule(arg1:string):Promise<events.Event>;
+
+export function SaveRewriteRules(arg1:string):Promise<events.Event>;
 
 export function SetConfig(arg1:string,arg2:models.Config):Promise<void>;
 

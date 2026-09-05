@@ -57,6 +57,9 @@ type HTTPPacket struct {
 	// 保留它是为了下载时能原样重放请求头，绕过 Referer / 防盗链校验；
 	// 这样就不必把响应体缓存在内存里。
 	RequestHeader http.Header `json:"RequestHeader,omitempty"`
+	// Rewritten 是命中的改包规则名。记录的是改写之后的内容，
+	// 也就是真正发到线上的那份，这个字段用于说明它被动过。
+	Rewritten []string `json:"Rewritten,omitempty"`
 }
 
 // ReplayRequest 是界面提交的重放请求，允许在原记录基础上修改后再发送。

@@ -2,17 +2,13 @@ package handler
 
 import (
 	"bytes"
-	"compress/gzip"
-	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
-	"github.com/andybalholm/brotli"
+	"github.com/dreamsxin/go-netsniffer/httpbody"
 	"github.com/dreamsxin/go-netsniffer/models"
-	"github.com/klauspost/compress/zstd"
 )
 
 // Sink 接收抓取到的报文。由调用方负责过滤、限流与投递，
@@ -34,8 +30,8 @@ func NewRequestLogger(sink Sink) *RequestLogger {
 	return &RequestLogger{sink: sink}
 }
 
-// Request 记录一个请求。id 用于与响应配对。
-func (r *RequestLogger) Request(req *http.Request, id string) {
+// Request 记录一个请求。id 用于与响应配对，rewritten 是命中的改包规则名。
+func (r *RequestLogger) Request(req *http.Request, id string, rewritten []string) {
 	if req == nil || req.URL == nil {
 		return
 	}
@@ -43,6 +39,7 @@ func (r *RequestLogger) Request(req *http.Request, id string) {
 	var data models.Packet
 	data.PacketType = models.PacketType_HTTP
 	data.HTTP.ID = id
+	data.HTTP.Rewritten = rewritten
 	data.HTTP.HTTPPacketType = models.HTTPPacketType_REQUEST
 	data.HTTP.Date = time.Now().Format(time.DateTime)
 	data.HTTP.Proto = req.Proto
@@ -71,8 +68,8 @@ func (r *RequestLogger) Request(req *http.Request, id string) {
 	r.sink.Emit(&data)
 }
 
-// Response 记录一个响应及其往返耗时。
-func (r *RequestLogger) Response(resp *http.Response, id string, duration time.Duration) {
+// Response 记录一个响应及其往返耗时，rewritten 是命中的改包规则名。
+func (r *RequestLogger) Response(resp *http.Response, id string, duration time.Duration, rewritten []string) {
 	if resp == nil {
 		return
 	}
@@ -80,6 +77,7 @@ func (r *RequestLogger) Response(resp *http.Response, id string, duration time.D
 	var data models.Packet
 	data.PacketType = models.PacketType_HTTP
 	data.HTTP.ID = id
+	data.HTTP.Rewritten = rewritten
 	data.HTTP.HTTPPacketType = models.HTTPPacketType_RESPONSE
 	data.HTTP.Date = time.Now().Format(time.DateTime)
 	data.HTTP.Proto = resp.Proto
@@ -172,38 +170,10 @@ func readAndReplaceBody(body *io.ReadCloser, limit int64) (data []byte, truncate
 	return raw, false, nil
 }
 
-// zstd 解码器可复用且并发安全，避免每个响应都新建一次
-var zstdDecoder, _ = zstd.NewReader(nil)
-
 func decodeBody(contentEncoding string, raw []byte) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(contentEncoding)) {
-	case "zstd":
-		if zstdDecoder == nil {
-			return "", errors.New("zstd 解码器不可用")
-		}
-		out, err := zstdDecoder.DecodeAll(raw, nil)
-		if err != nil {
-			return "", err
-		}
-		return string(out), nil
-	case "gzip":
-		zr, err := gzip.NewReader(bytes.NewReader(raw))
-		if err != nil {
-			return "", err
-		}
-		defer zr.Close()
-		out, err := io.ReadAll(zr)
-		if err != nil {
-			return "", err
-		}
-		return string(out), nil
-	case "br":
-		out, err := io.ReadAll(brotli.NewReader(bytes.NewReader(raw)))
-		if err != nil {
-			return "", err
-		}
-		return string(out), nil
-	default:
-		return string(raw), nil
+	out, err := httpbody.Decode(contentEncoding, raw)
+	if err != nil {
+		return "", err
 	}
+	return string(out), nil
 }

@@ -113,7 +113,7 @@ func TestResponseSkipsBinaryBody(t *testing.T) {
 		Request:       httptest.NewRequest(http.MethodGet, "http://example.com/a.png", nil),
 	}
 
-	logger.Response(resp, "7", 120*time.Millisecond)
+	logger.Response(resp, "7", 120*time.Millisecond, nil)
 
 	packets := sink.all()
 	if len(packets) != 1 {
@@ -136,7 +136,7 @@ func TestResponseWithoutRequest(t *testing.T) {
 	sink := newSink()
 	logger := NewRequestLogger(sink)
 
-	logger.Response(&http.Response{StatusCode: 502, Header: http.Header{}}, "1", 0)
+	logger.Response(&http.Response{StatusCode: 502, Header: http.Header{}}, "1", 0, nil)
 
 	if len(sink.all()) != 1 {
 		t.Fatalf("期望投递 1 个报文，得到 %d", len(sink.all()))
@@ -150,7 +150,7 @@ func TestRequestKeepsBodyReadable(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "http://example.com/api", strings.NewReader(`{"a":1}`))
 	req.Header.Set("Content-Type", "application/json")
 
-	logger.Request(req, "42")
+	logger.Request(req, "42", nil)
 
 	body, _ := io.ReadAll(req.Body)
 	if string(body) != `{"a":1}` {
@@ -174,12 +174,12 @@ func TestRequestAndResponseSharePairingID(t *testing.T) {
 	logger := NewRequestLogger(sink)
 
 	req := httptest.NewRequest(http.MethodGet, "http://example.com/x", nil)
-	logger.Request(req, "99")
+	logger.Request(req, "99", nil)
 	logger.Response(&http.Response{
 		StatusCode: 200,
 		Header:     http.Header{},
 		Request:    req,
-	}, "99", 5*time.Millisecond)
+	}, "99", 5*time.Millisecond, nil)
 
 	packets := sink.all()
 	if len(packets) != 2 {

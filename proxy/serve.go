@@ -21,10 +21,10 @@ import (
 // Handler 接收代理观察到的流量。实现必须是非阻塞的，
 // 任何耗时操作都会直接拖慢被代理的请求。
 type Handler interface {
-	// Request 记录一个请求，id 用于与响应配对
-	Request(req *http.Request, id string)
+	// Request 记录一个请求，id 用于与响应配对，rewritten 是命中的改包规则名
+	Request(req *http.Request, id string, rewritten []string)
 	// Response 记录一个响应及其往返耗时
-	Response(resp *http.Response, id string, duration time.Duration)
+	Response(resp *http.Response, id string, duration time.Duration, rewritten []string)
 	// Tunnel 记录一个按规则未解密、仅做转发的连接
 	Tunnel(host, id string)
 }
@@ -32,6 +32,13 @@ type Handler interface {
 // Rules 决定某个域名的 HTTPS 是否需要解密。
 type Rules interface {
 	ShouldMITM(host string) bool
+}
+
+// Rewriter 按规则改写请求与响应，返回命中的规则名。
+// 改写发生在记录之前，因此列表里看到的就是真正发到线上的内容。
+type Rewriter interface {
+	ApplyRequest(req *http.Request) []string
+	ApplyResponse(resp *http.Response) []string
 }
 
 // Options 控制代理的网络行为，零值表示使用默认值。
@@ -93,7 +100,7 @@ type Server struct {
 	tunnels map[net.Conn]struct{}
 }
 
-func New(authorityName string, h Handler, rules Rules, opts Options) (*Server, error) {
+func New(authorityName string, h Handler, rules Rules, rewriter Rewriter, opts Options) (*Server, error) {
 	ca, err := loadCA()
 	if err != nil {
 		return nil, err
@@ -134,7 +141,12 @@ func New(authorityName string, h Handler, rules Rules, opts Options) (*Server, e
 
 	gp.OnRequest().DoFunc(func(req *http.Request, ctx *goproxy.ProxyCtx) (*http.Request, *http.Response) {
 		ctx.UserData = time.Now()
-		h.Request(req, sessionID(ctx))
+		// 先改写再记录，列表里看到的就是真正发到线上的内容
+		var rewritten []string
+		if rewriter != nil {
+			rewritten = rewriter.ApplyRequest(req)
+		}
+		h.Request(req, sessionID(ctx), rewritten)
 		return req, nil
 	})
 
@@ -143,7 +155,11 @@ func New(authorityName string, h Handler, rules Rules, opts Options) (*Server, e
 		if start, ok := ctx.UserData.(time.Time); ok {
 			duration = time.Since(start)
 		}
-		h.Response(resp, sessionID(ctx), duration)
+		var rewritten []string
+		if rewriter != nil {
+			rewritten = rewriter.ApplyResponse(resp)
+		}
+		h.Response(resp, sessionID(ctx), duration, rewritten)
 		return resp
 	})
 

@@ -57,6 +57,47 @@ export namespace models {
 	        this.NotAfter = source["NotAfter"];
 	    }
 	}
+	export class AppStatus {
+	    HTTPStatus: number;
+	    IPStatus: number;
+	    Port: number;
+	    AutoProxy: boolean;
+	    Cert: CertStatus;
+	    RewriteRuleCount: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new AppStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.HTTPStatus = source["HTTPStatus"];
+	        this.IPStatus = source["IPStatus"];
+	        this.Port = source["Port"];
+	        this.AutoProxy = source["AutoProxy"];
+	        this.Cert = this.convertValues(source["Cert"], CertStatus);
+	        this.RewriteRuleCount = source["RewriteRuleCount"];
+	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
+	}
+	
 	export class IP {
 	    Status: number;
 	    Device: string;
@@ -94,6 +135,7 @@ export namespace models {
 	    Rule: string;
 	    AllowHTTP2: boolean;
 	    DownloadDir: string;
+	    RewriteRules: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new HTTP(source);
@@ -113,6 +155,7 @@ export namespace models {
 	        this.Rule = source["Rule"];
 	        this.AllowHTTP2 = source["AllowHTTP2"];
 	        this.DownloadDir = source["DownloadDir"];
+	        this.RewriteRules = source["RewriteRules"];
 	    }
 	}
 	export class Config {
@@ -206,6 +249,7 @@ export namespace models {
 	    ResourceType?: string;
 	    Suffix?: string;
 	    RequestHeader?: Record<string, Array<string>>;
+	    Rewritten?: string[];
 	
 	    static createFrom(source: any = {}) {
 	        return new HTTPPacket(source);
@@ -234,6 +278,7 @@ export namespace models {
 	        this.ResourceType = source["ResourceType"];
 	        this.Suffix = source["Suffix"];
 	        this.RequestHeader = source["RequestHeader"];
+	        this.Rewritten = source["Rewritten"];
 	    }
 	}
 	

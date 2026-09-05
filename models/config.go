@@ -33,6 +33,9 @@ type HTTP struct {
 	AllowHTTP2 bool
 	// DownloadDir 是下载资源的默认保存目录，留空表示每次询问
 	DownloadDir string
+	// RewriteRules 是改包规则的 JSON 文本，见 RewriteRule。
+	// 用文本保存是为了让用户能整段复制粘贴与版本管理。
+	RewriteRules string
 }
 
 type IP struct {
@@ -50,6 +53,23 @@ type IP struct {
 type Config struct {
 	HTTP HTTP
 	IP   IP
+}
+
+// AppStatus 是界面需要的运行状态汇总。
+// 状态由后端推送而不是前端轮询：代理可能自己异常停止，
+// 只在按钮点击后刷新会让界面显示与实际不符。
+type AppStatus struct {
+	// HTTPStatus 与 IPStatus 取值同 HTTP.Status：0 未启动 1 启动中 2 已启动
+	HTTPStatus int `json:"HTTPStatus"`
+	IPStatus   int `json:"IPStatus"`
+	// Port 是代理实际监听的端口
+	Port int `json:"Port"`
+	// AutoProxy 表示是否由本程序接管了系统代理
+	AutoProxy bool `json:"AutoProxy"`
+	// Cert 是根证书的真实状态
+	Cert CertStatus `json:"Cert"`
+	// RewriteRuleCount 是生效中的改包规则条数
+	RewriteRuleCount int `json:"RewriteRuleCount"`
 }
 
 // CertStatus 描述根证书的真实状态，供界面给出准确提示。
@@ -74,6 +94,7 @@ func DefaultConfig() Config {
 			SaveLogFile: false,
 			MaxBodySize: 1 << 20, // 1MB
 			Rule:        DefaultRule,
+			RewriteRules: DefaultRewriteRules,
 		},
 		IP: IP{
 			Snaplen: 1600, // 覆盖标准以太网帧的完整长度

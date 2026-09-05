@@ -23,6 +23,7 @@ import (
 	"github.com/dreamsxin/go-netsniffer/paths"
 	"github.com/dreamsxin/go-netsniffer/proxy"
 	"github.com/dreamsxin/go-netsniffer/replay"
+	"github.com/dreamsxin/go-netsniffer/rewrite"
 	"github.com/dreamsxin/go-netsniffer/rule"
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/pcapgo"
@@ -55,6 +56,8 @@ type App struct {
 
 	// rules 决定哪些域名需要解密，自身并发安全，支持热更新
 	rules *rule.Set
+	// rewrites 是改包规则，同样支持热更新
+	rewrites *rewrite.Set
 
 	lock      sync.Mutex
 	serve     *proxy.Server
@@ -73,6 +76,7 @@ func NewApp() *App {
 	return &App{
 		config:   cfg,
 		rules:    rule.New(cfg.HTTP.Rule),
+		rewrites: rewrite.New(cfg.HTTP.RewriteRules),
 		dataChan: make(chan *models.Packet, 4096),
 	}
 }
@@ -261,6 +265,8 @@ func (a *App) startup(ctx context.Context) {
 	a.ctx, a.cancel = context.WithCancel(ctx)
 	a.loadConfig()
 	a.safeGo("事件分发", a.runLoop)
+	// 界面挂载后立即推一次，避免初始状态为空
+	a.pushStatus()
 }
 
 // loadConfig 以默认配置为基准合并磁盘配置：
@@ -284,6 +290,9 @@ func (a *App) loadConfig() {
 	a.configMu.Unlock()
 
 	a.rules.Load(cfg.HTTP.Rule)
+	if err := a.rewrites.Load(cfg.HTTP.RewriteRules); err != nil {
+		log.Println("加载改包规则失败:", err)
+	}
 }
 
 func (a *App) saveConfig() {
@@ -342,6 +351,82 @@ func (a *App) FireErrorEvent(code int, msg string) {
 	runtime.EventsEmit(a.ctx, events.EVENT_TYPE_ERROR, &events.Event{Type: events.ERROR, Code: code, Message: msg})
 }
 
+// SaveRewriteRules 保存改包规则并同步返回校验结果。
+//
+// 单独提供这个方法而不复用 SetConfig，是为了让界面上的"保存"按钮
+// 能立刻知道成功与否；靠异步事件反馈会让用户不确定到底存进去没有。
+func (a *App) SaveRewriteRules(text string) *events.Event {
+	// 先校验，不合法就不写入配置，避免坏规则被持久化
+	if err := a.rewrites.Load(text); err != nil {
+		return &events.Event{Type: events.ERROR, Code: 7, Message: err.Error()}
+	}
+
+	a.configMu.Lock()
+	a.config.HTTP.RewriteRules = text
+	a.configMu.Unlock()
+	a.saveConfig()
+
+	count := 0
+	if a.rewrites.Enabled() {
+		count = a.rewrites.RuleCount()
+	}
+	a.pushStatus()
+	return &events.Event{Type: events.NOTICE, Code: 0,
+		Message: fmt.Sprintf("改包规则已保存，当前生效 %d 条", count)}
+}
+
+// SaveDecryptRule 保存解密规则。语法错误的行会被忽略，因此不会失败。
+func (a *App) SaveDecryptRule(text string) *events.Event {
+	a.rules.Load(text)
+
+	a.configMu.Lock()
+	a.config.HTTP.Rule = text
+	a.configMu.Unlock()
+	a.saveConfig()
+
+	return &events.Event{Type: events.NOTICE, Code: 0, Message: "解密规则已保存，立即生效"}
+}
+
+// DefaultRewriteRules 供界面的"恢复默认"使用
+func (a *App) DefaultRewriteRules() string { return models.DefaultRewriteRules }
+
+// DefaultDecryptRule 供界面的"恢复默认"使用
+func (a *App) DefaultDecryptRule() string { return models.DefaultRule }
+
+// setHTTPStatus / setIPStatus 是状态变更的唯一入口，
+// 集中在这里推送状态，避免漏掉某条分支导致界面显示与实际不符。
+func (a *App) setHTTPStatus(status int) {
+	a.updateConfig(func(c *models.Config) { c.HTTP.Status = status })
+	a.pushStatus()
+}
+
+func (a *App) setIPStatus(status int) {
+	a.updateConfig(func(c *models.Config) { c.IP.Status = status })
+	a.pushStatus()
+}
+
+// GetStatus 返回当前运行状态，供界面初始化时拉取一次。
+func (a *App) GetStatus() models.AppStatus {
+	cfg := a.snapshot()
+	return models.AppStatus{
+		HTTPStatus:       cfg.HTTP.Status,
+		IPStatus:         cfg.IP.Status,
+		Port:             cfg.HTTP.Port,
+		AutoProxy:        cfg.HTTP.AutoProxy,
+		Cert:             a.CertStatus(),
+		RewriteRuleCount: a.rewrites.RuleCount(),
+	}
+}
+
+// pushStatus 把最新状态推给界面。
+// 代理可能自己异常停止，只靠按钮点击后刷新会让界面与实际不符。
+func (a *App) pushStatus() {
+	if a.ctx == nil {
+		return
+	}
+	runtime.EventsEmit(a.ctx, "status", a.GetStatus())
+}
+
 func (a *App) GetConfig() models.Config {
 	return a.snapshot()
 }
@@ -366,6 +451,11 @@ func (a *App) SetConfig(field string, config models.Config) {
 
 	// 规则热更新，无需重启代理
 	a.rules.Load(config.HTTP.Rule)
+	// 改包规则解析失败时保留上一次生效的规则，并把原因告诉用户，
+	// 静默失败会让人以为改包没作用却查不出原因
+	if err := a.rewrites.Load(config.HTTP.RewriteRules); err != nil {
+		a.FireErrorEvent(7, err.Error())
+	}
 
 	// 这几项在构造代理时一次性生效，改完必须重启服务，
 	// 否则用户会以为设置没作用
@@ -413,6 +503,7 @@ func (a *App) GenerateCert() *events.Event {
 		log.Println("GenerateCert", err)
 		return &events.Event{Type: events.ERROR, Code: 1, Message: err.Error()}
 	}
+	a.pushStatus()
 	return nil
 }
 
@@ -431,6 +522,7 @@ func (a *App) InstallCert() *events.Event {
 			"Firefox 使用独立证书库，需在 设置-隐私与安全-证书 中手工导入：%s", proxy.CertPath())
 	}
 	log.Println("InstallCert", scope)
+	a.pushStatus()
 	return &events.Event{Type: events.NOTICE, Code: 0, Message: msg}
 }
 
@@ -439,6 +531,7 @@ func (a *App) UninstallCert() *events.Event {
 		log.Println("UninstallCert", err)
 		return &events.Event{Type: events.ERROR, Code: 1, Message: err.Error()}
 	}
+	a.pushStatus()
 	return nil
 }
 
@@ -448,6 +541,7 @@ func (a *App) EnableProxy() *events.Event {
 		return &events.Event{Type: events.ERROR, Code: 1, Message: err.Error()}
 	}
 	a.updateConfig(func(c *models.Config) { c.HTTP.AutoProxy = true })
+	a.pushStatus()
 	return nil
 }
 
@@ -456,6 +550,7 @@ func (a *App) DisableProxy() *events.Event {
 		return &events.Event{Type: events.ERROR, Code: 1, Message: err.Error()}
 	}
 	a.updateConfig(func(c *models.Config) { c.HTTP.AutoProxy = false })
+	a.pushStatus()
 	return nil
 }
 
@@ -470,7 +565,7 @@ func (a *App) StartProxy() *events.Event {
 	}
 
 	cfg := a.snapshot()
-	serve, err := proxy.New(authorityName, handler.NewRequestLogger(packetSink{app: a}), a.rules, proxy.Options{
+	serve, err := proxy.New(authorityName, handler.NewRequestLogger(packetSink{app: a}), a.rules, a.rewrites, proxy.Options{
 		UpstreamProxy: cfg.HTTP.UpstreamProxy,
 		ListenPort:    cfg.HTTP.Port,
 		AllowHTTP2:    cfg.HTTP.AllowHTTP2,
@@ -498,7 +593,7 @@ func (a *App) StartProxy() *events.Event {
 
 	a.serve = serve
 	a.listener = l
-	a.updateConfig(func(c *models.Config) { c.HTTP.Status = statusRunning })
+	a.setHTTPStatus(statusRunning)
 
 	a.safeGo("代理服务", func() {
 		log.Println("代理已监听:", l.Addr().String())
@@ -509,7 +604,7 @@ func (a *App) StartProxy() *events.Event {
 		if !stoppedByUser {
 			a.serve = nil
 			a.listener = nil
-			a.updateConfig(func(c *models.Config) { c.HTTP.Status = statusStopped })
+			a.setHTTPStatus(statusStopped)
 		}
 		a.lock.Unlock()
 
@@ -532,7 +627,7 @@ func (a *App) StopProxy() *events.Event {
 		return &events.Event{Type: events.ERROR, Code: 1, Message: "代理服务已经停止"}
 	}
 
-	a.updateConfig(func(c *models.Config) { c.HTTP.Status = statusStopped })
+	a.setHTTPStatus(statusStopped)
 	// Close 会同时断开监听、在途请求与未解密的隧道连接
 	serve.Close()
 	if listener != nil {
@@ -716,10 +811,8 @@ func (a *App) StartIPCapture(device string) {
 	}
 
 	a.tcphandle = handle
-	a.updateConfig(func(c *models.Config) {
-		c.IP.Device = device
-		c.IP.Status = statusRunning
-	})
+	a.updateConfig(func(c *models.Config) { c.IP.Device = device })
+	a.setIPStatus(statusRunning)
 
 	// 可选地把原始帧流式写入 pcap 文件。流式写入不占额外内存，
 	// 也保住了我们为了减小推送体积而丢弃的完整帧数据。
@@ -745,7 +838,7 @@ func (a *App) StartIPCapture(device string) {
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	packets := packetSource.Packets()
 	a.safeGo("IP 抓包", func() {
-		defer a.updateConfig(func(c *models.Config) { c.IP.Status = statusStopped })
+		defer a.setIPStatus(statusStopped)
 		if pcapFile != nil {
 			defer pcapFile.Close()
 		}
@@ -782,7 +875,7 @@ func (a *App) StopIPCapture() *events.Event {
 	if handle == nil {
 		return &events.Event{Type: events.ERROR, Code: 2, Message: "数据抓包已经停止"}
 	}
-	a.updateConfig(func(c *models.Config) { c.IP.Status = statusStopped })
+	a.setIPStatus(statusStopped)
 	handle.Close()
 	return nil
 }

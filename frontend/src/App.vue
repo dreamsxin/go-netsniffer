@@ -2,7 +2,7 @@
 import { EventsOn } from '../wailsjs/runtime/runtime'
 import { ref, reactive, onMounted, onBeforeUnmount, computed } from 'vue'
 import { ElNotification } from 'element-plus'
-import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture, GetDataDir, CertStatus, Download, ExportHAR, Replay } from '../wailsjs/go/main/App'
+import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture, GetDataDir, CertStatus, Download, ExportHAR, Replay, SaveRewriteRules, SaveDecryptRule, DefaultRewriteRules, DefaultDecryptRule, GetStatus } from '../wailsjs/go/main/App'
 
 const data = reactive({
   config: {
@@ -14,6 +14,8 @@ const data = reactive({
   selectdevice: null,
   dataDir: "",
   cert: { Generated: false, TrustedScopes: [], CertPath: "", NotAfter: "" },
+  // status 由后端推送：代理可能自己异常停止，只在点击后刷新会显示错
+  status: { HTTPStatus: 0, IPStatus: 0, Port: 0, AutoProxy: false, RewriteRuleCount: 0 },
   downloads: {},
   replay: {
     visible: false,
@@ -67,6 +69,12 @@ onMounted(() => {
     data.config = config
   })
   refreshCertStatus()
+  GetStatus().then(s => {
+    data.status = s
+    if (s.Cert) {
+      data.cert = s.Cert
+    }
+  })
   GetDataDir().then(dir => {
     data.dataDir = dir
   })
@@ -79,6 +87,30 @@ onBeforeUnmount(() => {
   observers = []
 })
 
+
+EventsOn("status", function (s) {
+  data.status = s
+  if (s.Cert) {
+    data.cert = s.Cert
+  }
+});
+
+// 抓包与抓包设备的运行状态
+const httpRunning = computed(() => data.status.HTTPStatus === 2)
+const ipRunning = computed(() => data.status.IPStatus === 2)
+
+// 证书状态归成三档，界面用不同颜色区分
+const certLevel = computed(() => {
+  const c = data.cert
+  if (!c.Generated) {
+    return { text: '证书未生成', type: 'danger' }
+  }
+  if (!c.TrustedScopes || c.TrustedScopes.length === 0) {
+    return { text: '证书未安装', type: 'warning' }
+  }
+  const names = c.TrustedScopes.map(s => (s === 'machine' ? '本机' : '当前用户')).join('、')
+  return { text: `证书已信任（${names}）`, type: 'success' }
+})
 
 function refreshCertStatus() {
   CertStatus().then(status => {
@@ -467,6 +499,55 @@ function formatPayload(b64) {
   }
 }
 
+// 规则是多行文本，不做失焦自动保存：显式点保存才写入，
+// 用户才能确定改动到底生效了没有
+function notifyResult(result) {
+  if (result == null) {
+    return
+  }
+  ElNotification({
+    title: result.Type === 2 ? 'Error' : 'Success',
+    message: result.Message,
+    type: result.Type === 2 ? 'error' : 'success',
+    duration: result.Type === 2 ? 10000 : 4000,
+  })
+}
+
+function saveDecryptRule() {
+  SaveDecryptRule(data.config.HTTP.Rule || '').then(notifyResult)
+}
+
+function resetDecryptRule() {
+  DefaultDecryptRule().then(text => {
+    data.config.HTTP.Rule = text
+    return SaveDecryptRule(text)
+  }).then(notifyResult)
+}
+
+function saveRewriteRules() {
+  SaveRewriteRules(data.config.HTTP.RewriteRules || '').then(notifyResult)
+}
+
+function resetRewriteRules() {
+  DefaultRewriteRules().then(text => {
+    data.config.HTTP.RewriteRules = text
+    return SaveRewriteRules(text)
+  }).then(notifyResult)
+}
+
+// 格式化只在本地做，不保存，方便先看清结构再决定是否提交
+function formatRewriteRules() {
+  const text = (data.config.HTTP.RewriteRules || '').trim()
+  if (!text) {
+    return
+  }
+  try {
+    data.config.HTTP.RewriteRules = JSON.stringify(JSON.parse(text), null, 2)
+  } catch (e) {
+    ElNotification({ title: 'Error', message: 'JSON 格式错误：' + e.message, type: 'error', duration: 10000 })
+  }
+}
+
 function clear() {
   httpTableData.length = 0;
   tcpTableData.length = 0;
@@ -543,11 +624,18 @@ function stopIPCapture() {
             <el-button type="success" round @click="generateCert">生成证书</el-button>
             <el-button type="warning" round @click="uninstallCert">卸载证书</el-button>
             <el-button-group>
-              <el-button type="primary" @click="startProxy">启动服务</el-button>
-              <el-button type="warning" @click="stopProxy">停止服务</el-button>
+              <el-button type="primary" @click="startProxy" :disabled="httpRunning">启动服务</el-button>
+              <el-button type="warning" @click="stopProxy" :disabled="!httpRunning">停止服务</el-button>
               <el-button type="danger" @click="clear">清除数据</el-button>
             </el-button-group>
             <el-button type="info" round @click="exportHar">导出 HAR</el-button>
+            <el-tag :type="httpRunning ? 'success' : 'info'" effect="dark" size="large">
+              {{ httpRunning ? `抓包中 · 127.0.0.1:${data.status.Port}` : '未抓包' }}
+            </el-tag>
+            <el-tag :type="certLevel.type" effect="plain">{{ certLevel.text }}</el-tag>
+            <el-tag v-if="data.status.RewriteRuleCount > 0" type="danger" effect="plain">
+              改包 {{ data.status.RewriteRuleCount }} 条
+            </el-tag>
           </el-space>
         </el-col>
       </el-row>
@@ -581,10 +669,34 @@ function stopIPCapture() {
                 <span>解密规则（未列入的域名只做转发，不解密）</span>
               </template>
               <el-input v-model="data.config.HTTP.Rule" type="textarea" :rows="8"
-                placeholder="* 全部匹配；*.a.com 匹配域名及子域；!前缀 表示排除；# 为注释"
-                @change="handleChange('HTTP.Rule')" />
+                placeholder="* 全部匹配；*.a.com 匹配域名及子域；!前缀 表示排除；# 为注释" />
+              <el-space wrap style="margin-top: 8px">
+                <el-button type="primary" size="small" @click="saveDecryptRule">保存规则</el-button>
+                <el-button size="small" @click="resetDecryptRule">恢复默认</el-button>
+              </el-space>
               <el-text size="small" type="info">
-                做了证书固定的客户端（微信、部分银行 App）必须用 ! 排除，否则它们会无法联网。规则修改后立即生效，无需重启服务。
+                做了证书固定的客户端（微信、部分银行 App）必须用 ! 排除，否则它们会无法联网。保存后立即生效，无需重启服务。
+              </el-text>
+            </el-collapse-item>
+            <el-collapse-item name="rewrite">
+              <template #title>
+                <span>改包规则（按规则改写请求与响应）</span>
+              </template>
+              <el-input v-model="data.config.HTTP.RewriteRules" type="textarea" :rows="12"
+                placeholder="JSON 数组，见下方字段说明" />
+              <el-space wrap style="margin-top: 8px">
+                <el-button type="primary" size="small" @click="saveRewriteRules">保存规则</el-button>
+                <el-button size="small" @click="formatRewriteRules">格式化</el-button>
+                <el-button size="small" @click="resetRewriteRules">恢复默认</el-button>
+              </el-space>
+              <el-text size="small" type="info">
+                字段：Enabled 是否启用；Name 备注；Phase 为 request 或 response；
+                URLRegex 匹配完整 URL 的正则（留空不限制）；Method 限定方法（留空不限制）；
+                SetHeaders 设置头；RemoveHeaders 删除头；Replacements 正文字符串替换；
+                StatusCode 改写响应状态码。
+                匹配条件全留空会作用于所有流量，请至少填一个。
+                压缩过的响应会先解压再替换，并去掉 Content-Encoding。
+                保存后立即生效；JSON 有误时不会写入，并提示具体原因。
               </el-text>
             </el-collapse-item>
           </el-collapse>
@@ -613,6 +725,9 @@ function stopIPCapture() {
                 编辑重放
               </el-button>
               <el-text v-if="item.BodyTruncated" size="small" type="warning">正文已截断</el-text>
+              <el-text v-if="item.Rewritten && item.Rewritten.length" size="small" type="danger">
+                已被改包规则改写：{{ item.Rewritten.join('、') }}
+              </el-text>
               <el-text v-if="data.downloads[item.ID]" size="small" type="warning">
                 正在下载 {{ data.downloads[item.ID].name }}
                 <span v-if="data.downloads[item.ID].percent >= 0">{{ data.downloads[item.ID].percent }}%</span>
@@ -652,9 +767,12 @@ function stopIPCapture() {
           <el-space wrap>
             <el-button type="primary" round @click="getDevices">获取</el-button>
             <el-button-group>
-              <el-button type="primary" @click="startIPCapture">启动服务</el-button>
-              <el-button type="warning" @click="stopIPCapture">停止服务</el-button>
+              <el-button type="primary" @click="startIPCapture" :disabled="ipRunning">启动服务</el-button>
+              <el-button type="warning" @click="stopIPCapture" :disabled="!ipRunning">停止服务</el-button>
             </el-button-group>
+            <el-tag :type="ipRunning ? 'success' : 'info'" effect="dark" size="large">
+              {{ ipRunning ? '抓包中' : '未抓包' }}
+            </el-tag>
           </el-space>
         </el-col>
       </el-row>
