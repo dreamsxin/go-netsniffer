@@ -5,15 +5,18 @@ import (
 	"crypto/x509"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/dreamsxin/go-netsniffer/cert"
+	"github.com/dreamsxin/go-netsniffer/models"
 	"github.com/dreamsxin/go-netsniffer/paths"
 	"github.com/elazarl/goproxy"
 )
@@ -39,6 +42,15 @@ type Rules interface {
 type Rewriter interface {
 	ApplyRequest(req *http.Request) []string
 	ApplyResponse(resp *http.Response) []string
+}
+
+// Breaker 是断点。Intercept 会阻塞当前连接的 goroutine 直到界面处理或超时，
+// 返回 abort 时调用方应直接返回错误响应而不继续转发。
+type Breaker interface {
+	InterceptRequest(req *http.Request, id string) models.BreakpointAction
+	InterceptResponse(resp *http.Response, id string) models.BreakpointAction
+	// ReleaseAll 在代理停止时放行所有等待中的请求，避免 goroutine 泄漏
+	ReleaseAll()
 }
 
 // Options 控制代理的网络行为，零值表示使用默认值。
@@ -92,15 +104,16 @@ func CertExists() bool {
 // Server 把 goproxy 与承载它的 http.Server 组合起来，
 // 并跟踪未解密的隧道连接，以便停止服务时能一并断开。
 type Server struct {
-	proxy *goproxy.ProxyHttpServer
-	http  *http.Server
+	proxy   *goproxy.ProxyHttpServer
+	http    *http.Server
+	breaker Breaker
 
 	mu      sync.Mutex
 	closed  bool
 	tunnels map[net.Conn]struct{}
 }
 
-func New(authorityName string, h Handler, rules Rules, rewriter Rewriter, opts Options) (*Server, error) {
+func New(authorityName string, h Handler, rules Rules, rewriter Rewriter, breaker Breaker, opts Options) (*Server, error) {
 	ca, err := loadCA()
 	if err != nil {
 		return nil, err
@@ -115,6 +128,7 @@ func New(authorityName string, h Handler, rules Rules, rewriter Rewriter, opts O
 
 	s := &Server{
 		proxy:   gp,
+		breaker: breaker,
 		tunnels: make(map[net.Conn]struct{}),
 	}
 	s.http = &http.Server{
@@ -146,6 +160,15 @@ func New(authorityName string, h Handler, rules Rules, rewriter Rewriter, opts O
 		if rewriter != nil {
 			rewritten = rewriter.ApplyRequest(req)
 		}
+
+		// 断点在改写之后：界面上看到并可编辑的是改写后的内容
+		if breaker != nil {
+			if breaker.InterceptRequest(req, sessionID(ctx)) == models.BreakpointAbort {
+				h.Request(req, sessionID(ctx), rewritten)
+				return req, abortResponse(req, "请求已被断点中止")
+			}
+		}
+
 		h.Request(req, sessionID(ctx), rewritten)
 		return req, nil
 	})
@@ -159,11 +182,40 @@ func New(authorityName string, h Handler, rules Rules, rewriter Rewriter, opts O
 		if rewriter != nil {
 			rewritten = rewriter.ApplyResponse(resp)
 		}
+
+		if breaker != nil {
+			if breaker.InterceptResponse(resp, sessionID(ctx)) == models.BreakpointAbort {
+				h.Response(resp, sessionID(ctx), duration, rewritten)
+				var req *http.Request
+				if resp != nil {
+					req = resp.Request
+				}
+				return abortResponse(req, "响应已被断点中止")
+			}
+		}
+
 		h.Response(resp, sessionID(ctx), duration, rewritten)
 		return resp
 	})
 
 	return s, nil
+}
+
+// abortResponse 构造断点中止时返回给客户端的响应。
+// 用 502 而不是伪造成功，避免客户端把中止误当成正常结果。
+func abortResponse(req *http.Request, reason string) *http.Response {
+	body := reason
+	return &http.Response{
+		Status:        "502 Bad Gateway",
+		StatusCode:    http.StatusBadGateway,
+		Proto:         "HTTP/1.1",
+		ProtoMajor:    1,
+		ProtoMinor:    1,
+		Request:       req,
+		Header:        http.Header{"Content-Type": []string{"text/plain; charset=utf-8"}},
+		Body:          io.NopCloser(strings.NewReader(body)),
+		ContentLength: int64(len(body)),
+	}
 }
 
 // sessionID 用 goproxy 的会话号把请求与响应关联起来。
@@ -181,6 +233,11 @@ func (s *Server) Serve(l net.Listener) error {
 // Close 关闭监听与所有在途连接，包括被 goproxy 劫持的隧道连接。
 // http.Server.Close 不会处理已劫持的连接，所以隧道要自己跟踪并关闭。
 func (s *Server) Close() error {
+	// 先放行被断点挂住的请求，否则它们会阻塞到超时才退出
+	if s.breaker != nil {
+		s.breaker.ReleaseAll()
+	}
+
 	s.mu.Lock()
 	s.closed = true
 	tunnels := make([]net.Conn, 0, len(s.tunnels))

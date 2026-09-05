@@ -2,11 +2,12 @@
 import { EventsOn } from '../wailsjs/runtime/runtime'
 import { ref, reactive, onMounted, onBeforeUnmount, computed } from 'vue'
 import { ElNotification } from 'element-plus'
-import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture, GetDataDir, CertStatus, Download, ExportHAR, Replay, SaveRewriteRules, SaveDecryptRule, DefaultRewriteRules, DefaultDecryptRule, GetStatus } from '../wailsjs/go/main/App'
+import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture, GetDataDir, CertStatus, Download, ExportHAR, Replay, SaveRewriteRules, SaveDecryptRule, DefaultRewriteRules, DefaultDecryptRule, GetStatus, GetPendingBreakpoints, ResolveBreakpoint, ReleaseAllBreakpoints, SaveBreakpointConfig } from '../wailsjs/go/main/App'
 
 const data = reactive({
   config: {
-    HTTP: {},
+    // Breakpoint 需要预置：GetConfig 返回前模板就会访问它的字段
+    HTTP: { Breakpoint: { Enabled: false, OnRequest: true, OnResponse: false, URLRegex: "", Method: "", TimeoutSeconds: 60 } },
     IP: {},
   },
   resultText: "",
@@ -15,7 +16,20 @@ const data = reactive({
   dataDir: "",
   cert: { Generated: false, TrustedScopes: [], CertPath: "", NotAfter: "" },
   // status 由后端推送：代理可能自己异常停止，只在点击后刷新会显示错
-  status: { HTTPStatus: 0, IPStatus: 0, Port: 0, AutoProxy: false, RewriteRuleCount: 0 },
+  status: { HTTPStatus: 0, IPStatus: 0, Port: 0, AutoProxy: false, RewriteRuleCount: 0, BreakpointEnabled: false, PendingBreakpoints: 0 },
+  // 被断点挂住的请求，后端推送
+  breakpoints: [],
+  bpEdit: {
+    visible: false,
+    id: "",
+    phase: "request",
+    method: "GET",
+    url: "",
+    statusCode: 0,
+    headerText: "",
+    body: "",
+    bodyBinary: false,
+  },
   downloads: {},
   replay: {
     visible: false,
@@ -78,6 +92,9 @@ onMounted(() => {
   GetDataDir().then(dir => {
     data.dataDir = dir
   })
+  GetPendingBreakpoints().then(list => {
+    data.breakpoints = list || []
+  })
   observeHeight(httpBodyRef, httpBodyHeight)
   observeHeight(ipBodyRef, ipBodyHeight)
 })
@@ -94,6 +111,64 @@ EventsOn("status", function (s) {
     data.cert = s.Cert
   }
 });
+
+EventsOn("breakpoints", function (list) {
+  data.breakpoints = list || []
+});
+
+// 断点：放行 / 中止 / 编辑后放行
+function resolveBreakpoint(hit, action) {
+  ResolveBreakpoint({ ID: hit.ID, Action: action }).then(err => {
+    if (err != null) {
+      ElNotification({ title: 'Error', message: err.Message, type: 'error' })
+    }
+  })
+}
+
+function openBreakpointEditor(hit) {
+  Object.assign(data.bpEdit, {
+    visible: true,
+    id: hit.ID,
+    phase: hit.Phase,
+    method: hit.Method || 'GET',
+    url: hit.URL || '',
+    statusCode: hit.StatusCode || 0,
+    headerText: headerToText(hit.Header),
+    body: hit.BodyBinary ? '' : (hit.Body || ''),
+    bodyBinary: !!hit.BodyBinary,
+  })
+}
+
+function submitBreakpointEdit() {
+  const e = data.bpEdit
+  data.bpEdit.visible = false
+  const payload = {
+    ID: e.id,
+    Action: 'modify',
+    Header: textToHeader(e.headerText),
+    // 二进制正文不允许编辑，留空表示不改动
+    Body: e.bodyBinary ? '' : e.body,
+  }
+  if (e.phase === 'request') {
+    payload.Method = e.method
+    payload.URL = e.url
+  } else {
+    payload.StatusCode = Number(e.statusCode) || 0
+  }
+  ResolveBreakpoint(payload).then(err => {
+    if (err != null) {
+      ElNotification({ title: 'Error', message: err.Message, type: 'error' })
+    }
+  })
+}
+
+function releaseAllBreakpoints() {
+  ReleaseAllBreakpoints().then(notifyResult)
+}
+
+function saveBreakpointConfig() {
+  SaveBreakpointConfig(data.config.HTTP.Breakpoint).then(notifyResult)
+}
 
 // 抓包与抓包设备的运行状态
 const httpRunning = computed(() => data.status.HTTPStatus === 2)
@@ -636,6 +711,9 @@ function stopIPCapture() {
             <el-tag v-if="data.status.RewriteRuleCount > 0" type="danger" effect="plain">
               改包 {{ data.status.RewriteRuleCount }} 条
             </el-tag>
+            <el-tag v-if="data.status.BreakpointEnabled" type="warning" effect="dark">
+              断点已开启{{ data.status.PendingBreakpoints > 0 ? ` · ${data.status.PendingBreakpoints} 个待处理` : '' }}
+            </el-tag>
           </el-space>
         </el-col>
       </el-row>
@@ -699,6 +777,35 @@ function stopIPCapture() {
                 保存后立即生效；JSON 有误时不会写入，并提示具体原因。
               </el-text>
             </el-collapse-item>
+            <el-collapse-item name="breakpoint">
+              <template #title>
+                <span>断点（挂住请求等你处理，调试用，默认关闭）</span>
+              </template>
+              <el-space wrap>
+                <el-switch v-model="data.config.HTTP.Breakpoint.Enabled" inline-prompt active-text="启用断点"
+                  inactive-text="启用断点" />
+                <el-switch v-model="data.config.HTTP.Breakpoint.OnRequest" inline-prompt active-text="拦请求"
+                  inactive-text="拦请求" />
+                <el-switch v-model="data.config.HTTP.Breakpoint.OnResponse" inline-prompt active-text="拦响应"
+                  inactive-text="拦响应" />
+                <el-input v-model="data.config.HTTP.Breakpoint.URLRegex" style="width: 260px"
+                  placeholder="URL 正则，留空会拦下所有流量">
+                  <template #prepend>URL</template>
+                </el-input>
+                <el-input v-model="data.config.HTTP.Breakpoint.Method" style="width: 150px" placeholder="留空不限制">
+                  <template #prepend>方式</template>
+                </el-input>
+                <el-input v-model.number="data.config.HTTP.Breakpoint.TimeoutSeconds" style="width: 170px">
+                  <template #prepend>超时(秒)</template>
+                </el-input>
+                <el-button type="primary" size="small" @click="saveBreakpointConfig">保存配置</el-button>
+              </el-space>
+              <el-text size="small" type="info">
+                断点会真的把请求挂住，超时秒数是无人处理时自动放行的兜底，不填会被纠正为默认 60 秒。
+                URL 留空且启用会拦下所有流量，等于把网络挂死，请务必填写匹配条件。
+                停止代理服务时会自动放行所有挂住的请求。
+              </el-text>
+            </el-collapse-item>
           </el-collapse>
         </el-col>
       </el-row>
@@ -711,6 +818,27 @@ function stopIPCapture() {
       </el-row>
         </div>
         <div class="pane-body" ref="httpBodyRef">
+      <el-alert v-if="data.breakpoints.length" type="warning" :closable="false" style="margin-bottom: 8px">
+        <template #title>
+          <el-space wrap>
+            <span>{{ data.breakpoints.length }} 个请求被断点挂住，处理后才会继续</span>
+            <el-button size="small" @click="releaseAllBreakpoints">全部放行</el-button>
+          </el-space>
+        </template>
+        <div v-for="hit in data.breakpoints" :key="hit.ID" style="margin-top: 6px">
+          <el-space wrap>
+            <el-tag size="small" :type="hit.Phase === 'request' ? 'primary' : 'success'">
+              {{ hit.Phase === 'request' ? '请求' : '响应' }}
+            </el-tag>
+            <span>{{ hit.Method }} {{ hit.URL }}</span>
+            <el-tag v-if="hit.StatusCode" size="small" type="info">{{ hit.StatusCode }}</el-tag>
+            <el-tag size="small" type="warning">{{ hit.DeadlineSeconds }}s 后自动放行</el-tag>
+            <el-button type="success" size="small" @click="resolveBreakpoint(hit, 'resume')">放行</el-button>
+            <el-button size="small" @click="openBreakpointEditor(hit)">编辑后放行</el-button>
+            <el-button type="danger" size="small" @click="resolveBreakpoint(hit, 'abort')">中止</el-button>
+          </el-space>
+        </div>
+      </el-alert>
       <EasyDataTable :headers="httpheaders" :items="httpTableData" :table-height="httpTableHeight">
         <template #expand="item">
           <div style="padding: 15px">
@@ -844,6 +972,38 @@ function stopIPCapture() {
     <template #footer>
       <el-button @click="data.replay.visible = false">取消</el-button>
       <el-button type="primary" @click="submitReplay">发送</el-button>
+    </template>
+  </el-dialog>
+
+  <el-dialog v-model="data.bpEdit.visible" title="编辑并放行" width="720px">
+    <el-form label-width="70px">
+      <el-form-item v-if="data.bpEdit.phase === 'request'" label="方式">
+        <el-select v-model="data.bpEdit.method" style="width: 140px">
+          <el-option v-for="m in ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS']" :key="m" :label="m"
+            :value="m" />
+        </el-select>
+      </el-form-item>
+      <el-form-item v-if="data.bpEdit.phase === 'request'" label="地址">
+        <el-input v-model="data.bpEdit.url" />
+      </el-form-item>
+      <el-form-item v-else label="状态码">
+        <el-input v-model.number="data.bpEdit.statusCode" style="width: 140px" />
+      </el-form-item>
+      <el-form-item label="头">
+        <el-input v-model="data.bpEdit.headerText" type="textarea" :rows="8"
+          placeholder="每行一条，格式 Name: Value" />
+      </el-form-item>
+      <el-form-item label="正文">
+        <el-input v-model="data.bpEdit.body" type="textarea" :rows="6" :disabled="data.bpEdit.bodyBinary"
+          :placeholder="data.bpEdit.bodyBinary ? '二进制内容不支持编辑，放行后原样转发' : '留空表示不改动正文'" />
+      </el-form-item>
+    </el-form>
+    <el-text size="small" type="info">
+      正文留空表示不改动。改动正文后 Content-Length 会自动重算；响应正文改动会去掉 Content-Encoding。
+    </el-text>
+    <template #footer>
+      <el-button @click="data.bpEdit.visible = false">取消</el-button>
+      <el-button type="primary" @click="submitBreakpointEdit">放行</el-button>
     </template>
   </el-dialog>
 </template>

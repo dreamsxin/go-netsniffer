@@ -36,6 +36,8 @@ type HTTP struct {
 	// RewriteRules 是改包规则的 JSON 文本，见 RewriteRule。
 	// 用文本保存是为了让用户能整段复制粘贴与版本管理。
 	RewriteRules string
+	// Breakpoint 是断点配置。断点会真的把请求挂住，默认关闭。
+	Breakpoint BreakpointConfig
 }
 
 type IP struct {
@@ -70,6 +72,9 @@ type AppStatus struct {
 	Cert CertStatus `json:"Cert"`
 	// RewriteRuleCount 是生效中的改包规则条数
 	RewriteRuleCount int `json:"RewriteRuleCount"`
+	// BreakpointEnabled 与 PendingBreakpoints 用于提醒用户断点正开着、有请求被挂住
+	BreakpointEnabled  bool `json:"BreakpointEnabled"`
+	PendingBreakpoints int  `json:"PendingBreakpoints"`
 }
 
 // CertStatus 描述根证书的真实状态，供界面给出准确提示。
@@ -93,8 +98,9 @@ func DefaultConfig() Config {
 			AutoProxy:   true,
 			SaveLogFile: false,
 			MaxBodySize: 1 << 20, // 1MB
-			Rule:        DefaultRule,
+			Rule:         DefaultRule,
 			RewriteRules: DefaultRewriteRules,
+			Breakpoint:   DefaultBreakpointConfig(),
 		},
 		IP: IP{
 			Snaplen: 1600, // 覆盖标准以太网帧的完整长度

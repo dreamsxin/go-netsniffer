@@ -64,6 +64,8 @@ export namespace models {
 	    AutoProxy: boolean;
 	    Cert: CertStatus;
 	    RewriteRuleCount: number;
+	    BreakpointEnabled: boolean;
+	    PendingBreakpoints: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppStatus(source);
@@ -77,6 +79,8 @@ export namespace models {
 	        this.AutoProxy = source["AutoProxy"];
 	        this.Cert = this.convertValues(source["Cert"], CertStatus);
 	        this.RewriteRuleCount = source["RewriteRuleCount"];
+	        this.BreakpointEnabled = source["BreakpointEnabled"];
+	        this.PendingBreakpoints = source["PendingBreakpoints"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -96,6 +100,82 @@ export namespace models {
 		    }
 		    return a;
 		}
+	}
+	export class BreakpointConfig {
+	    Enabled: boolean;
+	    URLRegex: string;
+	    Method: string;
+	    OnRequest: boolean;
+	    OnResponse: boolean;
+	    TimeoutSeconds: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new BreakpointConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Enabled = source["Enabled"];
+	        this.URLRegex = source["URLRegex"];
+	        this.Method = source["Method"];
+	        this.OnRequest = source["OnRequest"];
+	        this.OnResponse = source["OnResponse"];
+	        this.TimeoutSeconds = source["TimeoutSeconds"];
+	    }
+	}
+	export class BreakpointHit {
+	    ID: string;
+	    Phase: string;
+	    Date: string;
+	    Method: string;
+	    URL: string;
+	    Header?: Record<string, Array<string>>;
+	    Body?: string;
+	    BodyBinary?: boolean;
+	    StatusCode?: number;
+	    DeadlineSeconds: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new BreakpointHit(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ID = source["ID"];
+	        this.Phase = source["Phase"];
+	        this.Date = source["Date"];
+	        this.Method = source["Method"];
+	        this.URL = source["URL"];
+	        this.Header = source["Header"];
+	        this.Body = source["Body"];
+	        this.BodyBinary = source["BodyBinary"];
+	        this.StatusCode = source["StatusCode"];
+	        this.DeadlineSeconds = source["DeadlineSeconds"];
+	    }
+	}
+	export class BreakpointResolution {
+	    ID: string;
+	    Action: string;
+	    Method?: string;
+	    URL?: string;
+	    Header?: Record<string, Array<string>>;
+	    Body?: string;
+	    StatusCode?: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new BreakpointResolution(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ID = source["ID"];
+	        this.Action = source["Action"];
+	        this.Method = source["Method"];
+	        this.URL = source["URL"];
+	        this.Header = source["Header"];
+	        this.Body = source["Body"];
+	        this.StatusCode = source["StatusCode"];
+	    }
 	}
 	
 	export class IP {
@@ -136,6 +216,7 @@ export namespace models {
 	    AllowHTTP2: boolean;
 	    DownloadDir: string;
 	    RewriteRules: string;
+	    Breakpoint: BreakpointConfig;
 	
 	    static createFrom(source: any = {}) {
 	        return new HTTP(source);
@@ -156,7 +237,26 @@ export namespace models {
 	        this.AllowHTTP2 = source["AllowHTTP2"];
 	        this.DownloadDir = source["DownloadDir"];
 	        this.RewriteRules = source["RewriteRules"];
+	        this.Breakpoint = this.convertValues(source["Breakpoint"], BreakpointConfig);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class Config {
 	    HTTP: HTTP;

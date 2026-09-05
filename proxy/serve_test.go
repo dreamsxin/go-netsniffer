@@ -85,7 +85,7 @@ func useTempCert(t *testing.T) {
 func startProxy(t *testing.T, h Handler, rules Rules) string {
 	t.Helper()
 
-	srv, err := New("Test CA", h, rules, noRewrite{}, Options{})
+	srv, err := New("Test CA", h, rules, noRewrite{}, nil, Options{})
 	if err != nil {
 		t.Fatalf("创建代理失败: %v", err)
 	}
@@ -108,7 +108,7 @@ func TestNewRequiresCert(t *testing.T) {
 	keyPath = func() string { return filepath.Join(dir, "missing.key") }
 	defer func() { crtPath, keyPath = oldCrt, oldKey }()
 
-	if _, err := New("Test CA", &recordHandler{}, fixedRules(true), noRewrite{}, Options{}); err == nil {
+	if _, err := New("Test CA", &recordHandler{}, fixedRules(true), noRewrite{}, nil, Options{}); err == nil {
 		t.Error("证书缺失时应返回错误")
 	}
 }
@@ -240,7 +240,7 @@ func TestProxyTunnelsWhenRuleDenies(t *testing.T) {
 func TestUpstreamProxyRejectsSelf(t *testing.T) {
 	useTempCert(t)
 
-	_, err := New("Test CA", &recordHandler{}, fixedRules(true), noRewrite{}, Options{
+	_, err := New("Test CA", &recordHandler{}, fixedRules(true), noRewrite{}, nil, Options{
 		UpstreamProxy: "http://127.0.0.1:9000",
 		ListenPort:    9000,
 	})
@@ -252,7 +252,7 @@ func TestUpstreamProxyRejectsSelf(t *testing.T) {
 func TestUpstreamProxyRejectsInvalidAddress(t *testing.T) {
 	useTempCert(t)
 
-	if _, err := New("Test CA", &recordHandler{}, fixedRules(true), noRewrite{}, Options{
+	if _, err := New("Test CA", &recordHandler{}, fixedRules(true), noRewrite{}, nil, Options{
 		UpstreamProxy: "not-a-url",
 	}); err == nil {
 		t.Error("非法上游代理地址应返回错误")

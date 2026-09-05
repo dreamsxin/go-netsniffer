@@ -58,6 +58,10 @@ export function GetDevices() {
   return window['go']['main']['App']['GetDevices']();
 }
 
+export function GetPendingBreakpoints() {
+  return window['go']['main']['App']['GetPendingBreakpoints']();
+}
+
 export function GetStatus() {
   return window['go']['main']['App']['GetStatus']();
 }
@@ -66,8 +70,20 @@ export function InstallCert() {
   return window['go']['main']['App']['InstallCert']();
 }
 
+export function ReleaseAllBreakpoints() {
+  return window['go']['main']['App']['ReleaseAllBreakpoints']();
+}
+
 export function Replay(arg1) {
   return window['go']['main']['App']['Replay'](arg1);
+}
+
+export function ResolveBreakpoint(arg1) {
+  return window['go']['main']['App']['ResolveBreakpoint'](arg1);
+}
+
+export function SaveBreakpointConfig(arg1) {
+  return window['go']['main']['App']['SaveBreakpointConfig'](arg1);
 }
 
 export function SaveDecryptRule(arg1) {

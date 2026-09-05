@@ -31,11 +31,19 @@ export function GetDataDir():Promise<string>;
 
 export function GetDevices():Promise<Array<models.Device>>;
 
+export function GetPendingBreakpoints():Promise<Array<models.BreakpointHit>>;
+
 export function GetStatus():Promise<models.AppStatus>;
 
 export function InstallCert():Promise<events.Event>;
 
+export function ReleaseAllBreakpoints():Promise<events.Event>;
+
 export function Replay(arg1:models.ReplayRequest):Promise<events.Event>;
+
+export function ResolveBreakpoint(arg1:models.BreakpointResolution):Promise<events.Event>;
+
+export function SaveBreakpointConfig(arg1:models.BreakpointConfig):Promise<events.Event>;
 
 export function SaveDecryptRule(arg1:string):Promise<events.Event>;
 

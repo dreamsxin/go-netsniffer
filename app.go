@@ -15,6 +15,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/dreamsxin/go-netsniffer/breakpoint"
 	"github.com/dreamsxin/go-netsniffer/cert"
 	"github.com/dreamsxin/go-netsniffer/download"
 	"github.com/dreamsxin/go-netsniffer/events"
@@ -58,6 +59,8 @@ type App struct {
 	rules *rule.Set
 	// rewrites 是改包规则，同样支持热更新
 	rewrites *rewrite.Set
+	// breakpoints 管理断点。它会真的阻塞被代理的连接，默认关闭
+	breakpoints *breakpoint.Manager
 
 	lock      sync.Mutex
 	serve     *proxy.Server
@@ -73,12 +76,16 @@ type App struct {
 // NewApp creates a new App application struct
 func NewApp() *App {
 	cfg := models.DefaultConfig()
-	return &App{
+	a := &App{
 		config:   cfg,
 		rules:    rule.New(cfg.HTTP.Rule),
 		rewrites: rewrite.New(cfg.HTTP.RewriteRules),
 		dataChan: make(chan *models.Packet, 4096),
 	}
+	// 待处理队列变化时推给界面，否则用户不知道有请求被挂住了
+	a.breakpoints = breakpoint.New(a.pushBreakpoints)
+	a.breakpoints.Load(cfg.HTTP.Breakpoint)
+	return a
 }
 
 // packetSink 把 App 适配为 handler.Sink。
@@ -293,6 +300,9 @@ func (a *App) loadConfig() {
 	if err := a.rewrites.Load(cfg.HTTP.RewriteRules); err != nil {
 		log.Println("加载改包规则失败:", err)
 	}
+	if err := a.breakpoints.Load(cfg.HTTP.Breakpoint); err != nil {
+		log.Println("加载断点配置失败:", err)
+	}
 }
 
 func (a *App) saveConfig() {
@@ -405,6 +415,59 @@ func (a *App) setIPStatus(status int) {
 	a.pushStatus()
 }
 
+// pushBreakpoints 把待处理的断点推给界面。
+// 断点会挂住真实流量，用户必须能立刻看到有哪些请求在等他处理。
+func (a *App) pushBreakpoints() {
+	if a.ctx == nil {
+		return
+	}
+	runtime.EventsEmit(a.ctx, "breakpoints", a.breakpoints.Pending())
+	a.pushStatus()
+}
+
+// GetPendingBreakpoints 供界面初始化时拉取一次
+func (a *App) GetPendingBreakpoints() []models.BreakpointHit {
+	return a.breakpoints.Pending()
+}
+
+// ResolveBreakpoint 处理一个断点：放行、按回传内容改写后放行、或中止。
+func (a *App) ResolveBreakpoint(res models.BreakpointResolution) *events.Event {
+	if err := a.breakpoints.Resolve(res); err != nil {
+		return &events.Event{Type: events.ERROR, Code: 8, Message: err.Error()}
+	}
+	return nil
+}
+
+// ReleaseAllBreakpoints 一次性放行所有挂住的请求，用于"我不管了"的场景
+func (a *App) ReleaseAllBreakpoints() *events.Event {
+	a.breakpoints.ReleaseAll()
+	return &events.Event{Type: events.NOTICE, Code: 0, Message: "已放行所有挂住的请求"}
+}
+
+// SaveBreakpointConfig 保存断点配置并同步返回校验结果。
+func (a *App) SaveBreakpointConfig(cfg models.BreakpointConfig) *events.Event {
+	if err := a.breakpoints.Load(cfg); err != nil {
+		return &events.Event{Type: events.ERROR, Code: 8, Message: err.Error()}
+	}
+	// Load 会把非法的超时值纠正回合理范围，取回来再存
+	applied := a.breakpoints.Config()
+
+	a.configMu.Lock()
+	a.config.HTTP.Breakpoint = applied
+	a.configMu.Unlock()
+	a.saveConfig()
+	a.pushStatus()
+
+	if !applied.Enabled {
+		return &events.Event{Type: events.NOTICE, Code: 0, Message: "断点已关闭"}
+	}
+	msg := fmt.Sprintf("断点已开启，%d 秒无人处理自动放行", applied.TimeoutSeconds)
+	if applied.URLRegex == "" {
+		msg += "。当前未设置 URL 匹配，会拦下所有流量"
+	}
+	return &events.Event{Type: events.NOTICE, Code: 0, Message: msg}
+}
+
 // GetStatus 返回当前运行状态，供界面初始化时拉取一次。
 func (a *App) GetStatus() models.AppStatus {
 	cfg := a.snapshot()
@@ -415,6 +478,9 @@ func (a *App) GetStatus() models.AppStatus {
 		AutoProxy:        cfg.HTTP.AutoProxy,
 		Cert:             a.CertStatus(),
 		RewriteRuleCount: a.rewrites.RuleCount(),
+
+		BreakpointEnabled:  cfg.HTTP.Breakpoint.Enabled,
+		PendingBreakpoints: a.breakpoints.PendingCount(),
 	}
 }
 
@@ -565,7 +631,7 @@ func (a *App) StartProxy() *events.Event {
 	}
 
 	cfg := a.snapshot()
-	serve, err := proxy.New(authorityName, handler.NewRequestLogger(packetSink{app: a}), a.rules, a.rewrites, proxy.Options{
+	serve, err := proxy.New(authorityName, handler.NewRequestLogger(packetSink{app: a}), a.rules, a.rewrites, a.breakpoints, proxy.Options{
 		UpstreamProxy: cfg.HTTP.UpstreamProxy,
 		ListenPort:    cfg.HTTP.Port,
 		AllowHTTP2:    cfg.HTTP.AllowHTTP2,
