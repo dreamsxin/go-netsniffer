@@ -9,18 +9,22 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
-
+	"github.com/dreamsxin/go-netsniffer/cert"
+	"github.com/dreamsxin/go-netsniffer/download"
 	"github.com/dreamsxin/go-netsniffer/events"
+	"github.com/dreamsxin/go-netsniffer/export"
 	"github.com/dreamsxin/go-netsniffer/models"
 	"github.com/dreamsxin/go-netsniffer/paths"
 	"github.com/dreamsxin/go-netsniffer/proxy"
 	"github.com/dreamsxin/go-netsniffer/rule"
 	"github.com/gopacket/gopacket"
+	"github.com/gopacket/gopacket/pcapgo"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
 	"github.com/dreamsxin/go-netsniffer/proxy/handler"
@@ -29,6 +33,9 @@ import (
 )
 
 const authorityName string = "GoNetSniffer Proxy Authority"
+
+// appVersion 写入导出文件的 creator 信息
+const appVersion = "0.2.0"
 
 // 运行状态
 const (
@@ -366,6 +373,20 @@ func (a *App) GetDataDir() string {
 	return paths.Dir()
 }
 
+// CertStatus 返回证书的真实状态：是否生成、被哪些存储信任、路径与有效期。
+// 只判断文件存在会误导用户——文件在不代表系统已经信任它。
+func (a *App) CertStatus() models.CertStatus {
+	status := models.CertStatus{
+		Generated: proxy.CertExists(),
+		CertPath:  proxy.CertPath(),
+	}
+	if status.Generated {
+		status.TrustedScopes = proxy.TrustedScopes(authorityName)
+		status.NotAfter = proxy.CertNotAfter()
+	}
+	return status
+}
+
 // CertReady 返回根证书是否已生成，供界面提示用户下一步操作
 func (a *App) CertReady() bool {
 	return proxy.CertExists()
@@ -379,12 +400,22 @@ func (a *App) GenerateCert() *events.Event {
 	return nil
 }
 
+// InstallCert 安装根证书。返回的提示里会说明装到了哪个存储范围，
+// 用户级安装时 Firefox 等自带证书库的程序还需要手工导入。
 func (a *App) InstallCert() *events.Event {
-	if err := proxy.InstallCert(authorityName); err != nil {
+	scope, err := proxy.InstallCert(authorityName)
+	if err != nil {
 		log.Println("InstallCert", err)
 		return &events.Event{Type: events.ERROR, Code: 1, Message: err.Error()}
 	}
-	return nil
+
+	msg := "证书已安装到本机存储，对所有用户生效"
+	if scope == cert.ScopeUser {
+		msg = fmt.Sprintf("证书已安装到当前用户存储。若要在本机存储安装请以管理员身份运行。\n"+
+			"Firefox 使用独立证书库，需在 设置-隐私与安全-证书 中手工导入：%s", proxy.CertPath())
+	}
+	log.Println("InstallCert", scope)
+	return &events.Event{Type: events.NOTICE, Code: 0, Message: msg}
 }
 
 func (a *App) UninstallCert() *events.Event {
@@ -426,6 +457,7 @@ func (a *App) StartProxy() *events.Event {
 	serve, err := proxy.New(authorityName, handler.NewRequestLogger(packetSink{app: a}), a.rules, proxy.Options{
 		UpstreamProxy: cfg.HTTP.UpstreamProxy,
 		ListenPort:    cfg.HTTP.Port,
+		AllowHTTP2:    cfg.HTTP.AllowHTTP2,
 	})
 	if err != nil {
 		return &events.Event{Type: events.ERROR, Code: 1, Message: err.Error()}
@@ -506,6 +538,87 @@ func (a *App) Test() string {
 	return "test"
 }
 
+// Download 把某条响应记录对应的资源重新取回本地。
+//
+// 抓包时不缓存响应体，而是保留了当次的请求头，这里原样重放，
+// 因此带防盗链的资源也能下载成功，且不占用内存。
+func (a *App) Download(packet models.HTTPPacket) *events.Event {
+	if packet.URL == "" {
+		return &events.Event{Type: events.ERROR, Code: 4, Message: "该记录没有可下载的地址"}
+	}
+
+	suffix := packet.Suffix
+	if suffix == "" {
+		_, suffix = models.ClassifyContentType(packet.ContentType, packet.URL)
+	}
+	name := models.FileNameFromURL(packet.URL, suffix)
+
+	cfg := a.snapshot()
+	dest := ""
+	if cfg.HTTP.DownloadDir != "" {
+		dest = filepath.Join(cfg.HTTP.DownloadDir, name)
+	} else {
+		chosen, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+			Title:           "保存资源",
+			DefaultFilename: name,
+		})
+		if err != nil {
+			return &events.Event{Type: events.ERROR, Code: 4, Message: fmt.Sprintf("选择保存位置失败: %s", err)}
+		}
+		if chosen == "" {
+			return nil // 用户取消
+		}
+		dest = chosen
+	}
+
+	client := proxy.NewDownloadClient(cfg.HTTP.UpstreamProxy)
+	dl := download.New(client)
+	task := download.Task{
+		ID:     packet.ID,
+		URL:    packet.URL,
+		Header: packet.RequestHeader,
+		Dest:   dest,
+	}
+
+	a.safeGo("资源下载", func() {
+		err := dl.Do(a.ctx, task, func(p download.Progress) {
+			runtime.EventsEmit(a.ctx, "DownloadProgress", p)
+		})
+		if err != nil {
+			a.FireErrorEvent(4, fmt.Sprintf("下载失败: %s", err))
+			return
+		}
+		a.FireEvent(0, fmt.Sprintf("已保存到 %s", dest))
+	})
+
+	return nil
+}
+
+// ExportHAR 把界面上的记录导出为 HAR，Chrome DevTools 与 Charles 都能直接打开。
+// 记录由前端传入，避免后端再存一份同样的数据。
+func (a *App) ExportHAR(packets []models.HTTPPacket) *events.Event {
+	if len(packets) == 0 {
+		return &events.Event{Type: events.ERROR, Code: 5, Message: "没有可导出的记录"}
+	}
+
+	dest, err := runtime.SaveFileDialog(a.ctx, runtime.SaveDialogOptions{
+		Title:           "导出 HAR",
+		DefaultFilename: fmt.Sprintf("netsniffer-%s.har", time.Now().Format("20060102-150405")),
+	})
+	if err != nil {
+		return &events.Event{Type: events.ERROR, Code: 5, Message: fmt.Sprintf("选择保存位置失败: %s", err)}
+	}
+	if dest == "" {
+		return nil // 用户取消
+	}
+
+	if err := export.WriteHAR(dest, appVersion, packets); err != nil {
+		log.Println("ExportHAR", err)
+		return &events.Event{Type: events.ERROR, Code: 5, Message: fmt.Sprintf("导出失败: %s", err)}
+	}
+	return &events.Event{Type: events.NOTICE, Code: 0, Message: fmt.Sprintf("已导出到 %s", dest)}
+}
+
 func (a *App) GetDevices() (data []models.Device) {
 	devices, err := pcap.FindAllDevs()
 	if err != nil {
@@ -556,10 +669,34 @@ func (a *App) StartIPCapture(device string) {
 		c.IP.Status = statusRunning
 	})
 
+	// 可选地把原始帧流式写入 pcap 文件。流式写入不占额外内存，
+	// 也保住了我们为了减小推送体积而丢弃的完整帧数据。
+	var pcapFile *os.File
+	var pcapWriter *pcapgo.Writer
+	if cfg.IP.SavePcapFile {
+		path := paths.PcapFile(time.Now())
+		f, err := os.Create(path)
+		if err != nil {
+			a.FireErrorEvent(2, fmt.Sprintf("创建 pcap 文件失败: %s", err))
+		} else {
+			w := pcapgo.NewWriter(f)
+			if err := w.WriteFileHeader(uint32(cfg.IP.Snaplen), handle.LinkType()); err != nil {
+				f.Close()
+				a.FireErrorEvent(2, fmt.Sprintf("写入 pcap 头失败: %s", err))
+			} else {
+				pcapFile, pcapWriter = f, w
+				a.FireEvent(0, fmt.Sprintf("抓包将同时保存到 %s", path))
+			}
+		}
+	}
+
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	packets := packetSource.Packets()
 	a.safeGo("IP 抓包", func() {
 		defer a.updateConfig(func(c *models.Config) { c.IP.Status = statusStopped })
+		if pcapFile != nil {
+			defer pcapFile.Close()
+		}
 		for {
 			select {
 			case <-a.ctx.Done():
@@ -567,6 +704,13 @@ func (a *App) StartIPCapture(device string) {
 			case packet, ok := <-packets:
 				if !ok {
 					return
+				}
+				if pcapWriter != nil {
+					// 写盘失败只记一次日志，不影响抓包继续
+					if err := pcapWriter.WritePacket(packet.Metadata().CaptureInfo, packet.Data()); err != nil {
+						log.Println("写入 pcap 失败:", err)
+						pcapWriter = nil
+					}
 				}
 				a.emit(&models.Packet{
 					PacketType: models.PacketType_IP,

@@ -97,14 +97,21 @@ func (r *RequestLogger) Response(resp *http.Response, id string, duration time.D
 		data.HTTP.Host = resp.Request.Host
 		data.HTTP.Path = resp.Request.URL.Path
 		data.HTTP.URL = resp.Request.URL.String()
+		// 保留请求头，下载时原样重放以绕过 Referer / 防盗链校验，
+		// 这样不必把响应体缓存在内存里
+		data.HTTP.RequestHeader = resp.Request.Header
 	}
+
+	data.HTTP.ResourceType, data.HTTP.Suffix = models.ClassifyContentType(
+		data.HTTP.ContentType, data.HTTP.URL)
 
 	contentType := data.HTTP.ContentType
 	switch {
 	case resp.Body == nil || resp.ContentLength == 0:
 		data.HTTP.Body = "[no data]"
-	case !isTextual(contentType):
-		// 二进制内容不读取正文，避免把大文件读进内存
+	case data.HTTP.ResourceType != models.ResourceTypeText:
+		// 非文本内容不读取正文，避免把大文件读进内存；
+		// 需要查看时由界面走下载流程重新取一次
 		data.HTTP.Body = "[binary data] " + contentType
 	default:
 		body, truncated, err := readAndReplaceBody(&resp.Body, r.maxBodySize())
@@ -146,18 +153,6 @@ func (r *RequestLogger) maxBodySize() int64 {
 		return n
 	}
 	return 1 << 20
-}
-
-func isTextual(contentType string) bool {
-	if contentType == "" {
-		return false
-	}
-	ct := strings.ToLower(contentType)
-	return strings.HasPrefix(ct, "text/") ||
-		strings.Contains(ct, "json") ||
-		strings.Contains(ct, "xml") ||
-		strings.Contains(ct, "javascript") ||
-		strings.Contains(ct, "x-www-form-urlencoded")
 }
 
 // readAndReplaceBody 最多读取 limit 字节用于展示，并把完整内容重新装回 body，

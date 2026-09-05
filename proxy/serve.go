@@ -40,6 +40,21 @@ type Options struct {
 	UpstreamProxy string
 	// 本地监听端口，用于识别并拒绝把自己设置为上游代理
 	ListenPort int
+	// AllowHTTP2 允许与客户端协商 HTTP/2，关闭时统一降级为 HTTP/1.1
+	AllowHTTP2 bool
+}
+
+// NewDownloadClient 构造一个与代理共享网络配置的 http.Client，
+// 供下载资源时使用，从而复用上游代理与超时设置。
+func NewDownloadClient(upstreamProxy string) *http.Client {
+	tr := newTransport()
+	if upstreamProxy != "" {
+		if u, err := url.Parse(upstreamProxy); err == nil && u.Host != "" {
+			tr.Proxy = http.ProxyURL(u)
+		}
+	}
+	// 不设整体超时：大文件下载可能持续很久，取消由 context 负责
+	return &http.Client{Transport: tr}
 }
 
 const (
@@ -87,6 +102,7 @@ func New(authorityName string, h Handler, rules Rules, opts Options) (*Server, e
 	gp := goproxy.NewProxyHttpServer()
 	gp.Verbose = false
 	gp.Tr = newTransport()
+	gp.AllowHTTP2 = opts.AllowHTTP2
 	// 缓存按域名签发的证书，否则每个新域名都要做一次 RSA 签名
 	gp.CertStore = &certCache{}
 
@@ -295,11 +311,29 @@ func GenerateCert(authorityName string) error {
 	return cert.GenerateCA(authorityName, crtPath(), keyPath(), certValidity)
 }
 
-func InstallCert(authorityName string) error {
+// InstallCert 安装根证书，返回实际写入的存储范围（machine 或 user）。
+func InstallCert(authorityName string) (string, error) {
 	if _, err := os.Stat(crtPath()); err != nil {
-		return errors.New("根证书不存在，请先生成证书")
+		return "", errors.New("根证书不存在，请先生成证书")
 	}
 	return cert.InstallCert(crtPath())
+}
+
+// TrustedScopes 返回根证书当前被系统信任的存储范围。
+func TrustedScopes(authorityName string) []string {
+	return cert.TrustedScopes(authorityName)
+}
+
+// CertPath 返回根证书路径，供界面提示用户手工导入。
+func CertPath() string { return crtPath() }
+
+// CertNotAfter 返回根证书的有效期截止日期，无法读取时返回空串。
+func CertNotAfter() string {
+	ca, err := loadCA()
+	if err != nil || ca.Leaf == nil {
+		return ""
+	}
+	return ca.Leaf.NotAfter.Format(time.DateOnly)
 }
 
 func UninstallCert(authorityName string) error {

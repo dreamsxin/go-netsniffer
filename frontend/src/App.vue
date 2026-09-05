@@ -2,7 +2,7 @@
 import { EventsOn } from '../wailsjs/runtime/runtime'
 import { ref, reactive, useTemplateRef, watch, onMounted, computed } from 'vue'
 import { ElNotification } from 'element-plus'
-import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture, GetDataDir, CertReady } from '../wailsjs/go/main/App'
+import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture, GetDataDir, CertStatus, Download, ExportHAR } from '../wailsjs/go/main/App'
 
 const data = reactive({
   config: {
@@ -18,7 +18,8 @@ const data = reactive({
   devices: [],
   selectdevice: null,
   dataDir: "",
-  certReady: false,
+  cert: { Generated: false, TrustedScopes: [], CertPath: "", NotAfter: "" },
+  downloads: {},
 })
 
 let mainheight = computed(() => data.windowHeight - data.headerheight)
@@ -54,10 +55,28 @@ onMounted(() => {
 })
 
 function refreshCertStatus() {
-  CertReady().then(ready => {
-    data.certReady = ready
+  CertStatus().then(status => {
+    data.cert = status
   })
 }
+
+// 证书状态提示：文件存在不等于系统已信任，两者要分开说
+const certHint = computed(() => {
+  const c = data.cert
+  if (!c.Generated) {
+    return '证书未生成，请先点击“生成证书”再“安装证书”'
+  }
+  const scopes = c.TrustedScopes || []
+  if (scopes.length === 0) {
+    return `证书已生成（有效期至 ${c.NotAfter}）但系统尚未信任，请点击“安装证书”`
+  }
+  const names = scopes.map(s => (s === 'machine' ? '本机' : '当前用户')).join('、')
+  let hint = `证书已被系统信任（${names}，有效期至 ${c.NotAfter}）`
+  if (!scopes.includes('machine')) {
+    hint += '。Firefox 使用独立证书库，需手工导入 ' + c.CertPath
+  }
+  return hint
+})
 
 const activeName = ref('HTTP')
 
@@ -80,6 +99,26 @@ EventsOn("Test", function (v) {
   data.resultText = v
 });
 
+// 后端的通知类事件（安装证书结果、下载完成、导出完成等）
+EventsOn("response", function (v) {
+  ElNotification({
+    title: '提示',
+    message: v.Message,
+    type: 'success',
+    duration: 6000,
+  })
+});
+
+EventsOn("DownloadProgress", function (p) {
+  if (p.Done) {
+    delete data.downloads[p.ID]
+    return
+  }
+  const percent = p.Total > 0 ? Math.floor((p.Downloaded / p.Total) * 100) : -1
+  data.downloads[p.ID] = { name: p.FileName, percent, downloaded: p.Downloaded, total: p.Total }
+});
+
+
 
 
 // 表格数据只保留最近的记录，长时间抓包时无上限追加会耗尽 WebView 内存
@@ -97,6 +136,10 @@ function pushBatch(list, items) {
 }
 
 const packetTypeText = { 0: '请求', 1: '响应', 2: '隧道' }
+const resourceTypeText = {
+  text: '文本', image: '图片', audio: '音频',
+  video: '视频', document: '文档', other: '其他',
+}
 
 const httpheaders = [
   { value: 'Date', text: '日期', width: 160, fixed: true },
@@ -104,6 +147,7 @@ const httpheaders = [
   { value: 'Method', text: '方式', width: 90, fixed: true },
   { value: 'Host', text: '域名', width: 220 },
   { value: 'Path', text: '地址', width: 240 },
+  { value: 'KindText', text: '资源', width: 80 },
   { value: 'ContentType', text: '内容类型', width: 180 },
   { value: 'StatusCode', text: '状态', width: 90 },
   { value: 'Duration', text: '耗时(ms)', width: 100 }
@@ -113,6 +157,7 @@ const httpTableData = reactive([
 EventsOn("HTTPPackets", function (list) {
   for (const p of list) {
     p.TypeText = packetTypeText[p.HTTPPacketType ?? 0] ?? '-'
+    p.KindText = p.ResourceType ? (resourceTypeText[p.ResourceType] ?? p.ResourceType) : '-'
   }
   pushBatch(httpTableData, list)
 });
@@ -156,27 +201,27 @@ function generateCert() {
 }
 
 
+// 安装证书成功时返回的是 NOTICE 事件（Type 1），里面带有装到哪个存储的说明；
+// 只有 ERROR（Type 2）才是失败
 function installCert() {
-  InstallCert().then(err => {
-    if (err == null) {
-      ElNotification({
-        title: 'Success',
-        message: "安装证书成功",
-        type: 'success',
-      })
-    } else {
-      ElNotification({
-        title: 'Error',
-        message: err.Message,
-        type: 'error',
-      })
+  InstallCert().then(result => {
+    refreshCertStatus()
+    if (result == null) {
+      return
     }
+    ElNotification({
+      title: result.Type === 2 ? 'Error' : 'Success',
+      message: result.Message,
+      type: result.Type === 2 ? 'error' : 'success',
+      duration: 8000,
+    })
   })
 }
 
 
 function uninstallCert() {
   UninstallCert().then(err => {
+    refreshCertStatus()
     if (err == null) {
       ElNotification({
         title: 'Success',
@@ -233,6 +278,53 @@ function stopProxy() {
       })
     }
   })
+}
+
+// 只有响应记录才有可下载的资源
+function canDownload(item) {
+  return item.HTTPPacketType === 1 && !!item.URL
+}
+
+// 图片与音视频尝试内联预览。预览走的是 WebView 自己的请求，
+// 带防盗链的站点可能加载失败，因此始终同时提供下载入口。
+function canPreviewInline(item) {
+  return ['image', 'audio', 'video'].includes(item.ResourceType)
+}
+
+function downloadResource(item) {
+  Download(item).then(err => {
+    if (err != null) {
+      ElNotification({ title: 'Error', message: err.Message, type: 'error' })
+    }
+  })
+}
+
+function exportHar() {
+  ExportHAR(httpTableData.slice()).then(result => {
+    if (result == null) {
+      return // 用户取消
+    }
+    ElNotification({
+      title: result.Type === 2 ? 'Error' : 'Success',
+      message: result.Message,
+      type: result.Type === 2 ? 'error' : 'success',
+      duration: 8000,
+    })
+  })
+}
+
+function formatSize(n) {
+  if (!n || n < 0) {
+    return '未知'
+  }
+  const units = ['B', 'KB', 'MB', 'GB']
+  let i = 0
+  let v = n
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024
+    i++
+  }
+  return `${v.toFixed(i === 0 ? 0 : 1)} ${units[i]}`
 }
 
 // ApplicationPayload 经 JSON 传输后是 base64 字符串，这里解成可读文本
@@ -333,6 +425,7 @@ function stopIPCapture() {
               <el-button type="warning" @click="stopProxy">停止服务</el-button>
               <el-button type="danger" @click="clear">清除数据</el-button>
             </el-button-group>
+            <el-button type="info" round @click="exportHar">导出 HAR</el-button>
           </el-space>
         </el-col>
       </el-row>
@@ -345,6 +438,8 @@ function stopIPCapture() {
               @change="handleChange('HTTP.AutoProxy')" />
             <el-switch v-model="data.config.HTTP.SaveLogFile" inline-prompt active-text="保存到文件" inactive-text="保存到文件"
               @change="handleChange('HTTP.SaveLogFile')" class="item" />
+            <el-switch v-model="data.config.HTTP.AllowHTTP2" inline-prompt active-text="HTTP/2" inactive-text="HTTP/2"
+              @change="handleChange('HTTP.AllowHTTP2')" class="item" />
             <el-input v-model="data.config.HTTP.FilterHost" style="max-width: 200px" placeholder="Please input"
               @change="handleChange('HTTP.FilterHost')" class="item">
               <template #prepend>Host</template>
@@ -376,17 +471,37 @@ function stopIPCapture() {
       <el-row style="margin-bottom:5px">
         <el-col>
           <el-text size="small" type="info">
-            {{ data.certReady ? '证书已生成' : '证书未生成，请先点击“生成证书”并“安装证书”' }}，数据目录：{{ data.dataDir }}
+            {{ certHint }}，数据目录：{{ data.dataDir }}
           </el-text>
         </el-col>
       </el-row>
       <EasyDataTable :headers="httpheaders" :items="httpTableData" :table-height="httpheight">
         <template #expand="item">
           <div style="padding: 15px">
-            <span v-for="(item, index) in item.Header" v-bind:key="index">
-              <p>{{ index }}: {{ item.join(",") }}</p>
+            <el-space wrap style="margin-bottom: 8px">
+              <el-button v-if="canDownload(item)" type="primary" size="small" @click="downloadResource(item)">
+                下载（{{ formatSize(item.ContentLength) }}）
+              </el-button>
+              <el-text v-if="data.downloads[item.ID]" size="small" type="warning">
+                正在下载 {{ data.downloads[item.ID].name }}
+                <span v-if="data.downloads[item.ID].percent >= 0">{{ data.downloads[item.ID].percent }}%</span>
+                <span v-else>{{ formatSize(data.downloads[item.ID].downloaded) }}</span>
+              </el-text>
+            </el-space>
+
+            <!-- 图片与音视频尝试内联预览，失败时仍可用上面的下载按钮 -->
+            <div v-if="canPreviewInline(item)" style="margin-bottom: 8px">
+              <img v-if="item.ResourceType === 'image'" :src="item.URL" style="max-width: 400px; max-height: 300px" />
+              <video v-else-if="item.ResourceType === 'video'" :src="item.URL" controls
+                style="max-width: 480px; max-height: 320px"></video>
+              <audio v-else :src="item.URL" controls></audio>
+            </div>
+
+            <span v-for="(values, name) in item.Header" v-bind:key="name">
+              <p>{{ name }}: {{ values.join(",") }}</p>
             </span>
-            <pre>{{ item.Body }}</pre>
+            <pre v-if="item.ResourceType === 'text' || !item.ResourceType">{{ item.Body }}</pre>
+            <el-text v-else size="small" type="info">{{ item.Body }}</el-text>
           </div>
         </template>
       </EasyDataTable>
@@ -428,6 +543,8 @@ function stopIPCapture() {
             </el-input-number>
             <el-switch v-model="data.config.IP.Promisc" inline-prompt active-text="混杂模式" inactive-text="混杂模式"
               @change="handleChange('IP.Promisc')" />
+            <el-switch v-model="data.config.IP.SavePcapFile" inline-prompt active-text="存为 pcap" inactive-text="存为 pcap"
+              @change="handleChange('IP.SavePcapFile')" />
           </el-space>
         </el-col>
       </el-row>

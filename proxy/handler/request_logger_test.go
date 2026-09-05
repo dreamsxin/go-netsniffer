@@ -100,21 +100,6 @@ func TestDecodeBodyReturnsErrorOnBrokenData(t *testing.T) {
 	}
 }
 
-func TestIsTextual(t *testing.T) {
-	textual := []string{"text/html", "application/json", "application/xml", "application/javascript"}
-	for _, ct := range textual {
-		if !isTextual(ct) {
-			t.Errorf("isTextual(%q) = false, want true", ct)
-		}
-	}
-	binary := []string{"", "image/png", "video/mp4", "application/octet-stream"}
-	for _, ct := range binary {
-		if isTextual(ct) {
-			t.Errorf("isTextual(%q) = true, want false", ct)
-		}
-	}
-}
-
 func TestResponseSkipsBinaryBody(t *testing.T) {
 	sink := newSink()
 	logger := NewRequestLogger(sink)

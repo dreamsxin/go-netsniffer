@@ -61,5 +61,10 @@ func PacketLogFile(t time.Time) string {
 	return filepath.Join(Dir(), fmt.Sprintf("log%s.txt", t.Format(time.DateOnly)))
 }
 
+// PcapFile 返回本次抓包的 pcap 文件路径，按时间命名避免覆盖上一次的结果。
+func PcapFile(t time.Time) string {
+	return filepath.Join(Dir(), fmt.Sprintf("capture-%s.pcap", t.Format("20060102-150405")))
+}
+
 // AppLogFile 返回运行日志文件路径。
 func AppLogFile() string { return filepath.Join(Dir(), "app.log") }

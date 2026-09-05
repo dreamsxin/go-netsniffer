@@ -2,7 +2,6 @@ package models
 
 import (
 	"net/http"
-	"time"
 )
 
 type PacketType int
@@ -28,8 +27,7 @@ const (
 )
 
 type HTTPPacket struct {
-	Date     string
-	DateTime time.Time
+	Date string
 	// ID 用于把请求与对应的响应配对，同一次往返的两条记录 ID 相同
 	ID             string         `json:"ID,omitempty"`
 	HTTPPacketType HTTPPacketType `json:"HTTPPacketType,omitempty"`
@@ -48,6 +46,14 @@ type HTTPPacket struct {
 	ContentLength  int64          `json:"ContentLength,omitempty"`
 	// Duration 为该次往返的耗时（毫秒），只在响应记录上有值
 	Duration int64 `json:"Duration,omitempty"`
+	// ResourceType 是按 Content-Type 归纳的大类，界面据此选择预览方式
+	ResourceType ResourceType `json:"ResourceType,omitempty"`
+	// Suffix 是推断出的文件后缀，下载时用于拼文件名
+	Suffix string `json:"Suffix,omitempty"`
+	// RequestHeader 只在响应记录上有值。
+	// 保留它是为了下载时能原样重放请求头，绕过 Referer / 防盗链校验；
+	// 这样就不必把响应体缓存在内存里。
+	RequestHeader http.Header `json:"RequestHeader,omitempty"`
 }
 
 type IPPacketType int
@@ -59,7 +65,6 @@ const (
 
 type IPPacket struct {
 	Date         string
-	DateTime     time.Time
 	IPPacketType IPPacketType `json:"IPPacketType,omitempty"`
 	IPVersion    int          `json:"IPVersion,omitempty"`
 	// Ethernet

@@ -39,6 +39,24 @@ export namespace models {
 	        this.P2P = source["P2P"];
 	    }
 	}
+	export class CertStatus {
+	    Generated: boolean;
+	    TrustedScopes: string[];
+	    CertPath: string;
+	    NotAfter: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new CertStatus(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Generated = source["Generated"];
+	        this.TrustedScopes = source["TrustedScopes"];
+	        this.CertPath = source["CertPath"];
+	        this.NotAfter = source["NotAfter"];
+	    }
+	}
 	export class IP {
 	    Status: number;
 	    Device: string;
@@ -46,6 +64,7 @@ export namespace models {
 	    Promisc: boolean;
 	    Timeout: number;
 	    Filter: string;
+	    SavePcapFile: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new IP(source);
@@ -59,6 +78,7 @@ export namespace models {
 	        this.Promisc = source["Promisc"];
 	        this.Timeout = source["Timeout"];
 	        this.Filter = source["Filter"];
+	        this.SavePcapFile = source["SavePcapFile"];
 	    }
 	}
 	export class HTTP {
@@ -72,6 +92,8 @@ export namespace models {
 	    MaxBodySize: number;
 	    UpstreamProxy: string;
 	    Rule: string;
+	    AllowHTTP2: boolean;
+	    DownloadDir: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new HTTP(source);
@@ -89,6 +111,8 @@ export namespace models {
 	        this.MaxBodySize = source["MaxBodySize"];
 	        this.UpstreamProxy = source["UpstreamProxy"];
 	        this.Rule = source["Rule"];
+	        this.AllowHTTP2 = source["AllowHTTP2"];
+	        this.DownloadDir = source["DownloadDir"];
 	    }
 	}
 	export class Config {
@@ -160,6 +184,56 @@ export namespace models {
 		}
 	}
 	
+	export class HTTPPacket {
+	    Date: string;
+	    ID?: string;
+	    HTTPPacketType?: number;
+	    Proto?: string;
+	    ProtoMajor?: number;
+	    ProtoMinor?: number;
+	    Method?: string;
+	    Host?: string;
+	    Path?: string;
+	    URL?: string;
+	    Header?: Record<string, Array<string>>;
+	    Body?: string;
+	    Status?: string;
+	    StatusCode?: number;
+	    ContentType?: string;
+	    ContentLength?: number;
+	    Duration?: number;
+	    ResourceType?: string;
+	    Suffix?: string;
+	    RequestHeader?: Record<string, Array<string>>;
+	
+	    static createFrom(source: any = {}) {
+	        return new HTTPPacket(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Date = source["Date"];
+	        this.ID = source["ID"];
+	        this.HTTPPacketType = source["HTTPPacketType"];
+	        this.Proto = source["Proto"];
+	        this.ProtoMajor = source["ProtoMajor"];
+	        this.ProtoMinor = source["ProtoMinor"];
+	        this.Method = source["Method"];
+	        this.Host = source["Host"];
+	        this.Path = source["Path"];
+	        this.URL = source["URL"];
+	        this.Header = source["Header"];
+	        this.Body = source["Body"];
+	        this.Status = source["Status"];
+	        this.StatusCode = source["StatusCode"];
+	        this.ContentType = source["ContentType"];
+	        this.ContentLength = source["ContentLength"];
+	        this.Duration = source["Duration"];
+	        this.ResourceType = source["ResourceType"];
+	        this.Suffix = source["Suffix"];
+	        this.RequestHeader = source["RequestHeader"];
+	    }
+	}
 
 }
 

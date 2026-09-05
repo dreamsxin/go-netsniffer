@@ -28,6 +28,11 @@ type HTTP struct {
 	// Rule 决定哪些域名的 HTTPS 需要解密，语法见 rule 包。
 	// 对做了证书固定的客户端必须排除，否则它们会直接握手失败。
 	Rule string
+	// AllowHTTP2 允许与客户端协商 HTTP/2。关闭时所有连接被降级为 HTTP/1.1，
+	// 与真实环境有差异；开启后个别站点可能出现兼容问题，因此默认关闭。
+	AllowHTTP2 bool
+	// DownloadDir 是下载资源的默认保存目录，留空表示每次询问
+	DownloadDir string
 }
 
 type IP struct {
@@ -37,11 +42,27 @@ type IP struct {
 	Promisc bool   // 是否将网口设置为混杂模式，如果设置成true，那么网卡会将所有的数据包都抓到
 	Timeout int64  // 设置抓到包返回的超时时间，单位为毫秒
 	Filter  string
+	// SavePcapFile 抓包时同步写入 pcap 文件，可直接用 Wireshark 打开。
+	// 采用流式写入，不占用额外内存。
+	SavePcapFile bool
 }
 
 type Config struct {
 	HTTP HTTP
 	IP   IP
+}
+
+// CertStatus 描述根证书的真实状态，供界面给出准确提示。
+// 只判断文件是否存在会误导用户：文件在不等于系统已经信任它。
+type CertStatus struct {
+	// Generated 表示证书与私钥文件都已生成
+	Generated bool `json:"Generated"`
+	// TrustedScopes 是已信任该证书的存储范围，可能包含 "machine" 与 "user"
+	TrustedScopes []string `json:"TrustedScopes"`
+	// CertPath 是根证书路径，Firefox 等自带证书库的程序需要手工导入它
+	CertPath string `json:"CertPath"`
+	// NotAfter 是证书有效期截止日期，空表示未生成或无法解析
+	NotAfter string `json:"NotAfter"`
 }
 
 // DefaultConfig 返回一份完整的默认配置，作为配置文件缺失或字段缺省时的基准。

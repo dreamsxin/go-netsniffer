@@ -20,24 +20,39 @@ var certStoreLocations = []uint32{
 // 需要清理的证书存储列表
 var certStoreNames = []string{"ROOT", "TrustedPublisher"}
 
-// 使用Windows API替代了certutil命令行调用
-func InstallCert(certpath string) error {
+// 安装位置的可读名称，用于反馈给用户
+const (
+	ScopeMachine = "machine"
+	ScopeUser    = "user"
+)
+
+func scopeName(location uint32) string {
+	if location == windows.CERT_SYSTEM_STORE_LOCAL_MACHINE {
+		return ScopeMachine
+	}
+	return ScopeUser
+}
+
+// InstallCert 使用Windows API替代了certutil命令行调用。
+// 返回实际写入的存储范围（ScopeMachine 或 ScopeUser），
+// 调用方需要据此提示用户：用户级安装时 Firefox 等自带证书库的程序还需单独导入。
+func InstallCert(certpath string) (string, error) {
 	certData, err := os.ReadFile(certpath)
 	if err != nil {
-		return fmt.Errorf("读取证书文件失败: %w", err)
+		return "", fmt.Errorf("读取证书文件失败: %w", err)
 	}
 
 	block, _ := pem.Decode(certData)
 	if block == nil {
-		return errors.New("证书解析失败: 无效的 PEM 数据，请重新生成证书")
+		return "", errors.New("证书解析失败: 无效的 PEM 数据，请重新生成证书")
 	}
 
 	crt, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return fmt.Errorf("证书解析失败: %w", err)
+		return "", fmt.Errorf("证书解析失败: %w", err)
 	}
 	if len(crt.Raw) == 0 {
-		return errors.New("证书解析失败: 证书内容为空")
+		return "", errors.New("证书解析失败: 证书内容为空")
 	}
 
 	var lastErr error
@@ -46,9 +61,48 @@ func InstallCert(certpath string) error {
 			lastErr = err
 			continue
 		}
+		return scopeName(location), nil
+	}
+	return "", fmt.Errorf("证书安装失败（请尝试以管理员身份运行）: %w", lastErr)
+}
+
+// TrustedScopes 返回该证书当前被信任的存储范围，用于界面展示真实状态。
+// 只检查文件是否存在无法说明系统是否已信任它。
+func TrustedScopes(authorityName string) []string {
+	authNamePtr, err := windows.UTF16PtrFromString(authorityName)
+	if err != nil {
 		return nil
 	}
-	return fmt.Errorf("证书安装失败（请尝试以管理员身份运行）: %w", lastErr)
+
+	var scopes []string
+	for _, location := range certStoreLocations {
+		if certExistsInStore(authNamePtr, "ROOT", location) {
+			scopes = append(scopes, scopeName(location))
+		}
+	}
+	return scopes
+}
+
+func certExistsInStore(authNamePtr *uint16, storeName string, location uint32) bool {
+	storePtr, err := windows.UTF16PtrFromString(storeName)
+	if err != nil {
+		return false
+	}
+	store, err := windows.CertOpenStore(windows.CERT_STORE_PROV_SYSTEM, 0, 0,
+		location|windows.CERT_STORE_READONLY_FLAG, uintptr(unsafe.Pointer(storePtr)))
+	if err != nil {
+		return false
+	}
+	defer windows.CertCloseStore(store, 0)
+
+	ctx, err := windows.CertFindCertificateInStore(store,
+		windows.X509_ASN_ENCODING|windows.PKCS_7_ASN_ENCODING, 0,
+		windows.CERT_FIND_SUBJECT_STR, unsafe.Pointer(authNamePtr), nil)
+	if err != nil || ctx == nil {
+		return false
+	}
+	windows.CertFreeCertificateContext(ctx)
+	return true
 }
 
 func addCertToStore(raw []byte, storeName string, location uint32) error {

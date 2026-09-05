@@ -6,12 +6,24 @@ export function CertReady() {
   return window['go']['main']['App']['CertReady']();
 }
 
+export function CertStatus() {
+  return window['go']['main']['App']['CertStatus']();
+}
+
 export function DisableProxy() {
   return window['go']['main']['App']['DisableProxy']();
 }
 
+export function Download(arg1) {
+  return window['go']['main']['App']['Download'](arg1);
+}
+
 export function EnableProxy() {
   return window['go']['main']['App']['EnableProxy']();
+}
+
+export function ExportHAR(arg1) {
+  return window['go']['main']['App']['ExportHAR'](arg1);
 }
 
 export function FireErrorEvent(arg1, arg2) {
