@@ -20,12 +20,6 @@ var certStoreLocations = []uint32{
 // 需要清理的证书存储列表
 var certStoreNames = []string{"ROOT", "TrustedPublisher"}
 
-// 安装位置的可读名称，用于反馈给用户
-const (
-	ScopeMachine = "machine"
-	ScopeUser    = "user"
-)
-
 func scopeName(location uint32) string {
 	if location == windows.CERT_SYSTEM_STORE_LOCAL_MACHINE {
 		return ScopeMachine

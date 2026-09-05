@@ -18,6 +18,14 @@ const (
 	IntermediateCommonName = "Local Intermediate CA"
 )
 
+// 证书安装范围。用户级安装不需要管理员权限，但只对当前用户生效，
+// 且 Firefox 等自带证书库的程序仍需手工导入。
+const (
+	ScopeMachine = "machine"
+	ScopeUser    = "user"
+)
+
+
 // GenerateCA 生成用于 MITM 的自签根证书并落盘。
 // 证书用于本机安装，有效期给足，避免用户每年都要重新生成并安装一次。
 func GenerateCA(commonName, certPath, keyPath string, validity time.Duration) error {
