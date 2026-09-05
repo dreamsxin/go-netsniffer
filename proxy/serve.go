@@ -44,6 +44,15 @@ type Rewriter interface {
 	ApplyResponse(resp *http.Response) []string
 }
 
+// WSObserver 观察 WebSocket 帧。
+//
+// goproxy 检测到 101 后会把 resp.Body 断言成 io.ReadWriter 直接对拷，
+// 中间没有回调，因此唯一的注入点是在响应处理阶段替换 resp.Body。
+type WSObserver interface {
+	// WrapWebSocket 按需替换 101 响应的 Body 以旁路解析帧
+	WrapWebSocket(resp *http.Response, id string)
+}
+
 // Breaker 是断点。Intercept 会阻塞当前连接的 goroutine 直到界面处理或超时，
 // 返回 abort 时调用方应直接返回错误响应而不继续转发。
 type Breaker interface {
@@ -113,7 +122,7 @@ type Server struct {
 	tunnels map[net.Conn]struct{}
 }
 
-func New(authorityName string, h Handler, rules Rules, rewriter Rewriter, breaker Breaker, opts Options) (*Server, error) {
+func New(authorityName string, h Handler, rules Rules, rewriter Rewriter, breaker Breaker, ws WSObserver, opts Options) (*Server, error) {
 	ca, err := loadCA()
 	if err != nil {
 		return nil, err
@@ -195,6 +204,12 @@ func New(authorityName string, h Handler, rules Rules, rewriter Rewriter, breake
 		}
 
 		h.Response(resp, sessionID(ctx), duration, rewritten)
+
+		// 记录之后再包装 Body：101 响应之后才是帧流，
+		// 包装必须发生在 goproxy 断言 io.ReadWriter 之前
+		if ws != nil {
+			ws.WrapWebSocket(resp, sessionID(ctx))
+		}
 		return resp
 	})
 

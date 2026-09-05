@@ -94,6 +94,10 @@ export function SaveRewriteRules(arg1) {
   return window['go']['main']['App']['SaveRewriteRules'](arg1);
 }
 
+export function SaveWebSocketConfig(arg1) {
+  return window['go']['main']['App']['SaveWebSocketConfig'](arg1);
+}
+
 export function SetConfig(arg1, arg2) {
   return window['go']['main']['App']['SetConfig'](arg1, arg2);
 }

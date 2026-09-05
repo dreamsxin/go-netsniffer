@@ -202,6 +202,20 @@ export namespace models {
 	        this.SavePcapFile = source["SavePcapFile"];
 	    }
 	}
+	export class WebSocketConfig {
+	    Enabled: boolean;
+	    MaxPayloadBytes: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new WebSocketConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Enabled = source["Enabled"];
+	        this.MaxPayloadBytes = source["MaxPayloadBytes"];
+	    }
+	}
 	export class HTTP {
 	    Status: number;
 	    Port: number;
@@ -217,6 +231,7 @@ export namespace models {
 	    DownloadDir: string;
 	    RewriteRules: string;
 	    Breakpoint: BreakpointConfig;
+	    WebSocket: WebSocketConfig;
 	
 	    static createFrom(source: any = {}) {
 	        return new HTTP(source);
@@ -238,6 +253,7 @@ export namespace models {
 	        this.DownloadDir = source["DownloadDir"];
 	        this.RewriteRules = source["RewriteRules"];
 	        this.Breakpoint = this.convertValues(source["Breakpoint"], BreakpointConfig);
+	        this.WebSocket = this.convertValues(source["WebSocket"], WebSocketConfig);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

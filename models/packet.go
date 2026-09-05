@@ -9,12 +9,16 @@ type PacketType int
 const (
 	PacketType_HTTP PacketType = iota
 	PacketType_IP
+	// PacketType_WS 是 WebSocket 帧，与 HTTP/IP 一样走同一条投递通道，
+	// 复用已有的批量推送与队列满丢弃机制
+	PacketType_WS
 )
 
 type Packet struct {
 	PacketType PacketType
 	HTTP       HTTPPacket
 	IP         IPPacket
+	WS         WSFrame
 }
 
 type HTTPPacketType int

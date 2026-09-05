@@ -26,6 +26,7 @@ import (
 	"github.com/dreamsxin/go-netsniffer/replay"
 	"github.com/dreamsxin/go-netsniffer/rewrite"
 	"github.com/dreamsxin/go-netsniffer/rule"
+	"github.com/dreamsxin/go-netsniffer/websocket"
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/pcapgo"
 	"github.com/wailsapp/wails/v2/pkg/runtime"
@@ -94,6 +95,35 @@ type packetSink struct{ app *App }
 
 func (s packetSink) Emit(packet *models.Packet) { s.app.emit(packet) }
 func (s packetSink) MaxBodySize() int64         { return s.app.maxBodySize() }
+
+// wsObserver 把 App 适配为 proxy.WSObserver。
+// 同样用独立类型，避免 WrapWebSocket 被绑定到前端。
+type wsObserver struct{ app *App }
+
+// WrapWebSocket 在开关打开时替换 101 响应的 Body，旁路解析帧。
+// 开关关闭时什么都不做，转发路径与之前完全一致。
+func (o wsObserver) WrapWebSocket(resp *http.Response, id string) {
+	cfg := o.app.snapshot().HTTP.WebSocket
+	if !cfg.Enabled || !websocket.IsHandshake(resp) {
+		return
+	}
+
+	url := ""
+	if resp.Request != nil && resp.Request.URL != nil {
+		url = resp.Request.URL.String()
+	}
+	compressed := websocket.HasDeflateExtension(resp)
+
+	resp.Body = websocket.Wrap(resp.Body, id, url, cfg.MaxPayloadBytes, func(f models.WSFrame) {
+		// 协商了 permessage-deflate 时载荷是 deflate 流，
+		// 解压需要跨帧维护上下文，这里只标记，界面据此提示
+		if compressed {
+			f.Compressed = true
+		}
+		o.app.emit(&models.Packet{PacketType: models.PacketType_WS, WS: f})
+	})
+}
+
 
 // emit 非阻塞投递报文。抓包速度可能远快于界面消费速度，
 // 阻塞在这里会直接拖慢甚至挂死用户的网络请求，因此队列满时丢弃并计数。
@@ -167,6 +197,7 @@ func (a *App) runLoop() {
 		reportedDrops int64
 		httpBatch     []models.HTTPPacket
 		ipBatch       []models.IPPacket
+		wsBatch       []models.WSFrame
 	)
 
 	flush := func() {
@@ -177,6 +208,10 @@ func (a *App) runLoop() {
 		if len(ipBatch) > 0 {
 			runtime.EventsEmit(a.ctx, "IPPackets", ipBatch)
 			ipBatch = nil
+		}
+		if len(wsBatch) > 0 {
+			runtime.EventsEmit(a.ctx, "WSFrames", wsBatch)
+			wsBatch = nil
 		}
 	}
 	defer flush()
@@ -213,9 +248,11 @@ func (a *App) runLoop() {
 				}
 			case models.PacketType_IP:
 				ipBatch = append(ipBatch, packet.IP)
+			case models.PacketType_WS:
+				wsBatch = append(wsBatch, packet.WS)
 			}
 
-			if len(httpBatch)+len(ipBatch) >= flushMaxBatch {
+			if len(httpBatch)+len(ipBatch)+len(wsBatch) >= flushMaxBatch {
 				flush()
 			}
 		}
@@ -468,6 +505,23 @@ func (a *App) SaveBreakpointConfig(cfg models.BreakpointConfig) *events.Event {
 	return &events.Event{Type: events.NOTICE, Code: 0, Message: msg}
 }
 
+// SaveWebSocketConfig 保存 WebSocket 帧解析配置。
+// 解析开关在每次握手时读取，无需重启代理；已建立的连接保持原有行为。
+func (a *App) SaveWebSocketConfig(cfg models.WebSocketConfig) *events.Event {
+	cfg.Normalize()
+
+	a.configMu.Lock()
+	a.config.HTTP.WebSocket = cfg
+	a.configMu.Unlock()
+	a.saveConfig()
+
+	if !cfg.Enabled {
+		return &events.Event{Type: events.NOTICE, Code: 0, Message: "WebSocket 帧解析已关闭"}
+	}
+	return &events.Event{Type: events.NOTICE, Code: 0,
+		Message: fmt.Sprintf("WebSocket 帧解析已开启，单帧最多留存 %d 字节；已建立的连接需重连后生效", cfg.MaxPayloadBytes)}
+}
+
 // GetStatus 返回当前运行状态，供界面初始化时拉取一次。
 func (a *App) GetStatus() models.AppStatus {
 	cfg := a.snapshot()
@@ -631,7 +685,7 @@ func (a *App) StartProxy() *events.Event {
 	}
 
 	cfg := a.snapshot()
-	serve, err := proxy.New(authorityName, handler.NewRequestLogger(packetSink{app: a}), a.rules, a.rewrites, a.breakpoints, proxy.Options{
+	serve, err := proxy.New(authorityName, handler.NewRequestLogger(packetSink{app: a}), a.rules, a.rewrites, a.breakpoints, wsObserver{app: a}, proxy.Options{
 		UpstreamProxy: cfg.HTTP.UpstreamProxy,
 		ListenPort:    cfg.HTTP.Port,
 		AllowHTTP2:    cfg.HTTP.AllowHTTP2,

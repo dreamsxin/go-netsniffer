@@ -49,6 +49,8 @@ export function SaveDecryptRule(arg1:string):Promise<events.Event>;
 
 export function SaveRewriteRules(arg1:string):Promise<events.Event>;
 
+export function SaveWebSocketConfig(arg1:models.WebSocketConfig):Promise<events.Event>;
+
 export function SetConfig(arg1:string,arg2:models.Config):Promise<void>;
 
 export function StartIPCapture(arg1:string):Promise<void>;

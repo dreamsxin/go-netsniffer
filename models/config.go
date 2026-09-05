@@ -38,6 +38,8 @@ type HTTP struct {
 	RewriteRules string
 	// Breakpoint 是断点配置。断点会真的把请求挂住，默认关闭。
 	Breakpoint BreakpointConfig
+	// WebSocket 控制是否解析 WebSocket 帧，默认关闭
+	WebSocket WebSocketConfig
 }
 
 type IP struct {
@@ -101,6 +103,7 @@ func DefaultConfig() Config {
 			Rule:         DefaultRule,
 			RewriteRules: DefaultRewriteRules,
 			Breakpoint:   DefaultBreakpointConfig(),
+			WebSocket:    DefaultWebSocketConfig(),
 		},
 		IP: IP{
 			Snaplen: 1600, // 覆盖标准以太网帧的完整长度
@@ -121,6 +124,7 @@ func (c *Config) Normalize() {
 	if c.HTTP.MaxBodySize <= 0 {
 		c.HTTP.MaxBodySize = d.HTTP.MaxBodySize
 	}
+	c.HTTP.WebSocket.Normalize()
 	if c.IP.Snaplen <= 0 {
 		c.IP.Snaplen = d.IP.Snaplen
 	}

@@ -2,12 +2,15 @@
 import { EventsOn } from '../wailsjs/runtime/runtime'
 import { ref, reactive, onMounted, onBeforeUnmount, computed } from 'vue'
 import { ElNotification } from 'element-plus'
-import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture, GetDataDir, CertStatus, Download, ExportHAR, Replay, SaveRewriteRules, SaveDecryptRule, DefaultRewriteRules, DefaultDecryptRule, GetStatus, GetPendingBreakpoints, ResolveBreakpoint, ReleaseAllBreakpoints, SaveBreakpointConfig } from '../wailsjs/go/main/App'
+import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture, GetDataDir, CertStatus, Download, ExportHAR, Replay, SaveRewriteRules, SaveDecryptRule, DefaultRewriteRules, DefaultDecryptRule, GetStatus, GetPendingBreakpoints, ResolveBreakpoint, ReleaseAllBreakpoints, SaveBreakpointConfig, SaveWebSocketConfig } from '../wailsjs/go/main/App'
 
 const data = reactive({
   config: {
-    // Breakpoint 需要预置：GetConfig 返回前模板就会访问它的字段
-    HTTP: { Breakpoint: { Enabled: false, OnRequest: true, OnResponse: false, URLRegex: "", Method: "", TimeoutSeconds: 60 } },
+    // Breakpoint / WebSocket 需要预置：GetConfig 返回前模板就会访问它们的字段
+    HTTP: {
+      Breakpoint: { Enabled: false, OnRequest: true, OnResponse: false, URLRegex: "", Method: "", TimeoutSeconds: 60 },
+      WebSocket: { Enabled: false, MaxPayloadBytes: 4096 },
+    },
     IP: {},
   },
   resultText: "",
@@ -46,8 +49,10 @@ const data = reactive({
 // 结果是整页出现滚动条、头部与分页器被滚出视野。
 const httpBodyRef = ref(null)
 const ipBodyRef = ref(null)
+const wsBodyRef = ref(null)
 const httpBodyHeight = ref(400)
 const ipBodyHeight = ref(400)
+const wsBodyHeight = ref(400)
 
 // 分页栏在表格滚动区之外，table-height 只管滚动区，
 // 因此要给它留出高度，否则分页器会被容器裁掉
@@ -58,6 +63,8 @@ const httpTableHeight = computed(() =>
   Math.max(MIN_TABLE_HEIGHT, httpBodyHeight.value - FOOTER_RESERVE))
 const ipTableHeight = computed(() =>
   Math.max(MIN_TABLE_HEIGHT, ipBodyHeight.value - FOOTER_RESERVE))
+const wsTableHeight = computed(() =>
+  Math.max(MIN_TABLE_HEIGHT, wsBodyHeight.value - FOOTER_RESERVE))
 
 let observers = []
 
@@ -97,6 +104,7 @@ onMounted(() => {
   })
   observeHeight(httpBodyRef, httpBodyHeight)
   observeHeight(ipBodyRef, ipBodyHeight)
+  observeHeight(wsBodyRef, wsBodyHeight)
 })
 
 onBeforeUnmount(() => {
@@ -314,6 +322,31 @@ const tcpTableData = reactive([
 EventsOn("IPPackets", function (list) {
   pushBatch(tcpTableData, list)
 });
+
+const wsDirectionText = { send: '↑ 客户端', recv: '↓ 服务端' }
+
+const wsheaders = [
+  { value: 'Date', text: '日期', width: 150, fixed: true },
+  { value: 'Direction', text: '方向', width: 100, fixed: true },
+  { value: 'OpcodeName', text: '类型', width: 90 },
+  { value: 'PayloadLen', text: '长度', width: 90 },
+  { value: 'URL', text: 'URL' },
+];
+const wsTableData = reactive([
+])
+EventsOn("WSFrames", function (list) {
+  pushBatch(wsTableData, list)
+});
+
+// 帧解析在每次握手时读配置，无需重启代理；已建立的连接要重连才生效
+function saveWebSocketConfig() {
+  SaveWebSocketConfig(data.config.HTTP.WebSocket).then(notifyResult)
+}
+
+function clearWSFrames() {
+  wsTableData.splice(0, wsTableData.length)
+}
+
 
 
 function generateCert() {
@@ -939,6 +972,55 @@ function stopIPCapture() {
           </div>
         </template>
       </EasyDataTable>
+        </div>
+      </div>
+    </el-tab-pane>
+    <el-tab-pane label="WebSocket" name="WS">
+      <div class="pane">
+        <div class="pane-header">
+          <el-alert type="info" :closable="false" show-icon style="margin-bottom:5px"
+            title="调试用途，默认关闭。开启后代理会在转发路径上旁路解析每一帧，只观察不修改；已建立的连接需重连后生效。" />
+          <el-row style="margin-bottom:5px">
+            <el-col>
+              <el-space wrap>
+                <el-switch v-model="data.config.HTTP.WebSocket.Enabled" inline-prompt active-text="解析帧"
+                  inactive-text="解析帧" />
+                <el-text>单帧留存</el-text>
+                <el-input-number v-model="data.config.HTTP.WebSocket.MaxPayloadBytes" :min="1" :max="1048576"
+                  :controls="false" aria-label="单帧留存字节数">
+                  <template #suffix>
+                    <span>字节</span>
+                  </template>
+                </el-input-number>
+                <el-button type="primary" @click="saveWebSocketConfig">保存</el-button>
+                <el-button @click="clearWSFrames">清空</el-button>
+                <el-tag :type="data.config.HTTP.WebSocket.Enabled ? 'success' : 'info'" effect="dark" size="large">
+                  {{ data.config.HTTP.WebSocket.Enabled ? '解析中' : '未解析' }}
+                </el-tag>
+              </el-space>
+            </el-col>
+          </el-row>
+        </div>
+        <div class="pane-body" ref="wsBodyRef">
+          <EasyDataTable :headers="wsheaders" :items="wsTableData" :table-height="wsTableHeight">
+            <template #item-Direction="item">
+              <el-tag :type="item.Direction === 'send' ? 'warning' : 'success'" size="small">
+                {{ wsDirectionText[item.Direction] || item.Direction }}
+              </el-tag>
+            </template>
+            <template #item-PayloadLen="item">
+              {{ item.PayloadLen }}<span v-if="item.Truncated"> (截断)</span>
+            </template>
+            <template #expand="item">
+              <div style="padding: 15px">
+                <p>连接: {{ item.ConnID || '-' }} / FIN: {{ item.Fin }} / 掩码: {{ item.Masked }} / opcode: {{ item.Opcode }}
+                </p>
+                <el-alert v-if="item.Compressed" type="warning" :closable="false" show-icon
+                  title="该连接协商了 permessage-deflate，载荷是 deflate 流，下面显示的是压缩后的原始字节。" style="margin-bottom:8px" />
+                <pre>{{ formatPayload(item.Payload) }}</pre>
+              </div>
+            </template>
+          </EasyDataTable>
         </div>
       </div>
     </el-tab-pane>
