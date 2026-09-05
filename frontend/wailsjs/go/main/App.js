@@ -66,6 +66,14 @@ export function GetStatus() {
   return window['go']['main']['App']['GetStatus']();
 }
 
+export function GetTCPStream(arg1) {
+  return window['go']['main']['App']['GetTCPStream'](arg1);
+}
+
+export function GetTCPStreams() {
+  return window['go']['main']['App']['GetTCPStreams']();
+}
+
 export function InstallCert() {
   return window['go']['main']['App']['InstallCert']();
 }
@@ -76,6 +84,10 @@ export function ReleaseAllBreakpoints() {
 
 export function Replay(arg1) {
   return window['go']['main']['App']['Replay'](arg1);
+}
+
+export function ResetTCPStreams() {
+  return window['go']['main']['App']['ResetTCPStreams']();
 }
 
 export function ResolveBreakpoint(arg1) {
@@ -92,6 +104,10 @@ export function SaveDecryptRule(arg1) {
 
 export function SaveRewriteRules(arg1) {
   return window['go']['main']['App']['SaveRewriteRules'](arg1);
+}
+
+export function SaveTCPStreamConfig(arg1) {
+  return window['go']['main']['App']['SaveTCPStreamConfig'](arg1);
 }
 
 export function SaveWebSocketConfig(arg1) {

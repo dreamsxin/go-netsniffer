@@ -2,7 +2,7 @@
 import { EventsOn } from '../wailsjs/runtime/runtime'
 import { ref, reactive, onMounted, onBeforeUnmount, computed } from 'vue'
 import { ElNotification } from 'element-plus'
-import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture, GetDataDir, CertStatus, Download, ExportHAR, Replay, SaveRewriteRules, SaveDecryptRule, DefaultRewriteRules, DefaultDecryptRule, GetStatus, GetPendingBreakpoints, ResolveBreakpoint, ReleaseAllBreakpoints, SaveBreakpointConfig, SaveWebSocketConfig } from '../wailsjs/go/main/App'
+import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture, GetDataDir, CertStatus, Download, ExportHAR, Replay, SaveRewriteRules, SaveDecryptRule, DefaultRewriteRules, DefaultDecryptRule, GetStatus, GetPendingBreakpoints, ResolveBreakpoint, ReleaseAllBreakpoints, SaveBreakpointConfig, SaveWebSocketConfig, GetTCPStreams, GetTCPStream, ResetTCPStreams, SaveTCPStreamConfig } from '../wailsjs/go/main/App'
 
 const data = reactive({
   config: {
@@ -11,7 +11,9 @@ const data = reactive({
       Breakpoint: { Enabled: false, OnRequest: true, OnResponse: false, URLRegex: "", Method: "", TimeoutSeconds: 60 },
       WebSocket: { Enabled: false, MaxPayloadBytes: 4096 },
     },
-    IP: {},
+    IP: {
+      TCPStream: { Enabled: false, MaxStreamBytes: 65536, MaxStreams: 256, IdleSeconds: 60 },
+    },
   },
   resultText: "",
   devices: [],
@@ -42,6 +44,12 @@ const data = reactive({
     body: "",
     truncated: false,
   },
+  // follow 是"跟随流"视图，载荷按需拉取而不随列表推送
+  follow: {
+    visible: false,
+    loading: false,
+    detail: null,
+  },
 })
 
 // 表格高度实测得来，不再用"窗口高 - 魔数"估算：
@@ -50,9 +58,11 @@ const data = reactive({
 const httpBodyRef = ref(null)
 const ipBodyRef = ref(null)
 const wsBodyRef = ref(null)
+const streamBodyRef = ref(null)
 const httpBodyHeight = ref(400)
 const ipBodyHeight = ref(400)
 const wsBodyHeight = ref(400)
+const streamBodyHeight = ref(400)
 
 // 分页栏在表格滚动区之外，table-height 只管滚动区，
 // 因此要给它留出高度，否则分页器会被容器裁掉
@@ -65,6 +75,8 @@ const ipTableHeight = computed(() =>
   Math.max(MIN_TABLE_HEIGHT, ipBodyHeight.value - FOOTER_RESERVE))
 const wsTableHeight = computed(() =>
   Math.max(MIN_TABLE_HEIGHT, wsBodyHeight.value - FOOTER_RESERVE))
+const streamTableHeight = computed(() =>
+  Math.max(MIN_TABLE_HEIGHT, streamBodyHeight.value - FOOTER_RESERVE))
 
 let observers = []
 
@@ -102,9 +114,13 @@ onMounted(() => {
   GetPendingBreakpoints().then(list => {
     data.breakpoints = list || []
   })
+  GetTCPStreams().then(list => {
+    streamTableData.splice(0, streamTableData.length, ...(list || []))
+  })
   observeHeight(httpBodyRef, httpBodyHeight)
   observeHeight(ipBodyRef, ipBodyHeight)
   observeHeight(wsBodyRef, wsBodyHeight)
+  observeHeight(streamBodyRef, streamBodyHeight)
 })
 
 onBeforeUnmount(() => {
@@ -346,6 +362,56 @@ function saveWebSocketConfig() {
 function clearWSFrames() {
   wsTableData.splice(0, wsTableData.length)
 }
+
+const streamheaders = [
+  { value: 'Date', text: '开始', width: 150, fixed: true },
+  { value: 'ClientAddr', text: '客户端', width: 170 },
+  { value: 'ServerAddr', text: '服务端', width: 170 },
+  { value: 'ClientBytes', text: '上行', width: 100 },
+  { value: 'ServerBytes', text: '下行', width: 100 },
+  { value: 'MissingBytes', text: '缺失', width: 90 },
+  { value: 'Closed', text: '状态', width: 90 },
+  { value: 'operation', text: '操作', width: 110 },
+];
+const streamTableData = reactive([
+])
+
+// 推送的是整张流表快照：流会持续变化，追加式更新会出现重复行
+EventsOn("TCPStreams", function (list) {
+  streamTableData.splice(0, streamTableData.length, ...(list || []))
+});
+
+// 载荷按需拉取：流是长期变化的，随列表一起推送会让传输量高出几个数量级
+function followStream(item) {
+  data.follow.visible = true
+  data.follow.loading = true
+  data.follow.detail = null
+  GetTCPStream(item.ID).then(detail => {
+    data.follow.loading = false
+    if (detail == null) {
+      ElNotification({ title: 'Error', message: '该流已不在记录中', type: 'error' })
+      data.follow.visible = false
+      return
+    }
+    data.follow.detail = detail
+  })
+}
+
+function resetTCPStreams() {
+  ResetTCPStreams().then(notifyResult)
+}
+
+// formatSize 把 0 当作"未知"（响应体长度缺失时确实如此），
+// 但流的方向字节数 0 是确定的事实，不能混为一谈
+function formatBytes(n) {
+  return n ? formatSize(n) : '0 B'
+}
+
+
+function saveTCPStreamConfig() {
+  SaveTCPStreamConfig(data.config.IP.TCPStream).then(notifyResult)
+}
+
 
 
 
@@ -1024,7 +1090,83 @@ function stopIPCapture() {
         </div>
       </div>
     </el-tab-pane>
+    <el-tab-pane label="TCP 流" name="Stream">
+      <div class="pane">
+        <div class="pane-header">
+          <el-alert type="info" :closable="false" show-icon style="margin-bottom:5px"
+            title="调试用途，默认关闭。单个报文只能看到片段，重组按序列号把两个方向各自拼成连续字节流。开关改动需要重启 IP 抓包后生效。" />
+          <el-row style="margin-bottom:5px">
+            <el-col>
+              <el-space wrap>
+                <el-switch v-model="data.config.IP.TCPStream.Enabled" inline-prompt active-text="流重组"
+                  inactive-text="流重组" />
+                <el-text>单向留存</el-text>
+                <el-input-number v-model="data.config.IP.TCPStream.MaxStreamBytes" :min="1" :max="4194304"
+                  :controls="false" aria-label="单向留存字节数">
+                  <template #suffix>
+                    <span>字节</span>
+                  </template>
+                </el-input-number>
+                <el-text>最多流数</el-text>
+                <el-input-number v-model="data.config.IP.TCPStream.MaxStreams" :min="1" :max="4096" :controls="false"
+                  aria-label="最多跟踪流数" />
+                <el-text>空闲回收</el-text>
+                <el-input-number v-model="data.config.IP.TCPStream.IdleSeconds" :min="1" :max="3600" :controls="false"
+                  aria-label="空闲回收秒数">
+                  <template #suffix>
+                    <span>秒</span>
+                  </template>
+                </el-input-number>
+                <el-button type="primary" @click="saveTCPStreamConfig">保存</el-button>
+                <el-button @click="resetTCPStreams">清空</el-button>
+              </el-space>
+            </el-col>
+          </el-row>
+        </div>
+        <div class="pane-body" ref="streamBodyRef">
+          <EasyDataTable :headers="streamheaders" :items="streamTableData" :table-height="streamTableHeight">
+            <template #item-ClientBytes="item">{{ formatBytes(item.ClientBytes) }}</template>
+            <template #item-ServerBytes="item">{{ formatBytes(item.ServerBytes) }}</template>
+            <template #item-MissingBytes="item">
+              <el-text v-if="item.MissingBytes > 0" type="warning">{{ formatBytes(item.MissingBytes) }}</el-text>
+              <span v-else>-</span>
+            </template>
+            <template #item-Closed="item">
+              <el-tag :type="item.Closed ? 'info' : 'success'" size="small">
+                {{ item.Closed ? '已关闭' : '进行中' }}
+              </el-tag>
+            </template>
+            <template #item-operation="item">
+              <el-button link type="primary" @click="followStream(item)">跟随流</el-button>
+            </template>
+          </EasyDataTable>
+        </div>
+      </div>
+    </el-tab-pane>
   </el-tabs>
+
+  <el-dialog v-model="data.follow.visible" title="跟随 TCP 流" width="820px">
+    <div v-if="data.follow.loading">加载中…</div>
+    <div v-else-if="data.follow.detail">
+      <p>{{ data.follow.detail.ClientAddr }} → {{ data.follow.detail.ServerAddr }}</p>
+      <el-alert v-if="data.follow.detail.MissingBytes > 0" type="warning" :closable="false" show-icon
+        :title="`有 ${data.follow.detail.MissingBytes} 字节缺失（丢包或抓包开始于连接中途），下面的内容并不连续。`"
+        style="margin-bottom:8px" />
+      <el-tabs>
+        <el-tab-pane :label="`上行 ${formatBytes(data.follow.detail.ClientBytes)}`">
+          <el-text v-if="data.follow.detail.ClientTruncated" type="warning">只留存了前一段</el-text>
+          <pre class="stream-payload">{{ formatPayload(data.follow.detail.ClientPayload) }}</pre>
+        </el-tab-pane>
+        <el-tab-pane :label="`下行 ${formatBytes(data.follow.detail.ServerBytes)}`">
+          <el-text v-if="data.follow.detail.ServerTruncated" type="warning">只留存了前一段</el-text>
+          <pre class="stream-payload">{{ formatPayload(data.follow.detail.ServerPayload) }}</pre>
+        </el-tab-pane>
+      </el-tabs>
+    </div>
+    <template #footer>
+      <el-button @click="data.follow.visible = false">关闭</el-button>
+    </template>
+  </el-dialog>
 
   <el-dialog v-model="data.replay.visible" title="编辑并重放" width="720px">
     <el-form label-width="70px">
@@ -1128,5 +1270,14 @@ function stopIPCapture() {
 
 .item {
   margin-right: 40px;
+}
+
+/* 流载荷可能很长，给个固定高度自己滚，避免把对话框顶出屏幕 */
+.stream-payload {
+  max-height: 380px;
+  overflow: auto;
+  margin: 4px 0 0;
+  white-space: pre-wrap;
+  word-break: break-all;
 }
 </style>

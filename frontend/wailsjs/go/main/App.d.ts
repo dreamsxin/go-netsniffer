@@ -35,11 +35,17 @@ export function GetPendingBreakpoints():Promise<Array<models.BreakpointHit>>;
 
 export function GetStatus():Promise<models.AppStatus>;
 
+export function GetTCPStream(arg1:string):Promise<models.TCPStreamDetail>;
+
+export function GetTCPStreams():Promise<Array<models.TCPStreamSummary>>;
+
 export function InstallCert():Promise<events.Event>;
 
 export function ReleaseAllBreakpoints():Promise<events.Event>;
 
 export function Replay(arg1:models.ReplayRequest):Promise<events.Event>;
+
+export function ResetTCPStreams():Promise<events.Event>;
 
 export function ResolveBreakpoint(arg1:models.BreakpointResolution):Promise<events.Event>;
 
@@ -48,6 +54,8 @@ export function SaveBreakpointConfig(arg1:models.BreakpointConfig):Promise<event
 export function SaveDecryptRule(arg1:string):Promise<events.Event>;
 
 export function SaveRewriteRules(arg1:string):Promise<events.Event>;
+
+export function SaveTCPStreamConfig(arg1:models.TCPStreamConfig):Promise<events.Event>;
 
 export function SaveWebSocketConfig(arg1:models.WebSocketConfig):Promise<events.Event>;
 

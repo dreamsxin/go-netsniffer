@@ -178,6 +178,24 @@ export namespace models {
 	    }
 	}
 	
+	export class TCPStreamConfig {
+	    Enabled: boolean;
+	    MaxStreamBytes: number;
+	    MaxStreams: number;
+	    IdleSeconds: number;
+	
+	    static createFrom(source: any = {}) {
+	        return new TCPStreamConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Enabled = source["Enabled"];
+	        this.MaxStreamBytes = source["MaxStreamBytes"];
+	        this.MaxStreams = source["MaxStreams"];
+	        this.IdleSeconds = source["IdleSeconds"];
+	    }
+	}
 	export class IP {
 	    Status: number;
 	    Device: string;
@@ -186,6 +204,7 @@ export namespace models {
 	    Timeout: number;
 	    Filter: string;
 	    SavePcapFile: boolean;
+	    TCPStream: TCPStreamConfig;
 	
 	    static createFrom(source: any = {}) {
 	        return new IP(source);
@@ -200,7 +219,26 @@ export namespace models {
 	        this.Timeout = source["Timeout"];
 	        this.Filter = source["Filter"];
 	        this.SavePcapFile = source["SavePcapFile"];
+	        this.TCPStream = this.convertValues(source["TCPStream"], TCPStreamConfig);
 	    }
+	
+		convertValues(a: any, classs: any, asMap: boolean = false): any {
+		    if (!a) {
+		        return a;
+		    }
+		    if (a.slice && a.map) {
+		        return (a as any[]).map(elem => this.convertValues(elem, classs));
+		    } else if ("object" === typeof a) {
+		        if (asMap) {
+		            for (const key of Object.keys(a)) {
+		                a[key] = new classs(a[key]);
+		            }
+		            return a;
+		        }
+		        return new classs(a);
+		    }
+		    return a;
+		}
 	}
 	export class WebSocketConfig {
 	    Enabled: boolean;
@@ -414,6 +452,71 @@ export namespace models {
 	        this.URL = source["URL"];
 	        this.Header = source["Header"];
 	        this.Body = source["Body"];
+	    }
+	}
+	
+	export class TCPStreamDetail {
+	    ID: string;
+	    Date: string;
+	    Updated: string;
+	    ClientAddr: string;
+	    ServerAddr: string;
+	    ClientBytes: number;
+	    ServerBytes: number;
+	    MissingBytes: number;
+	    Closed: boolean;
+	    ClientPayload?: number[];
+	    ServerPayload?: number[];
+	    ClientTruncated?: boolean;
+	    ServerTruncated?: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new TCPStreamDetail(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ID = source["ID"];
+	        this.Date = source["Date"];
+	        this.Updated = source["Updated"];
+	        this.ClientAddr = source["ClientAddr"];
+	        this.ServerAddr = source["ServerAddr"];
+	        this.ClientBytes = source["ClientBytes"];
+	        this.ServerBytes = source["ServerBytes"];
+	        this.MissingBytes = source["MissingBytes"];
+	        this.Closed = source["Closed"];
+	        this.ClientPayload = source["ClientPayload"];
+	        this.ServerPayload = source["ServerPayload"];
+	        this.ClientTruncated = source["ClientTruncated"];
+	        this.ServerTruncated = source["ServerTruncated"];
+	    }
+	}
+	export class TCPStreamSummary {
+	    ID: string;
+	    Date: string;
+	    Updated: string;
+	    ClientAddr: string;
+	    ServerAddr: string;
+	    ClientBytes: number;
+	    ServerBytes: number;
+	    MissingBytes: number;
+	    Closed: boolean;
+	
+	    static createFrom(source: any = {}) {
+	        return new TCPStreamSummary(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.ID = source["ID"];
+	        this.Date = source["Date"];
+	        this.Updated = source["Updated"];
+	        this.ClientAddr = source["ClientAddr"];
+	        this.ServerAddr = source["ServerAddr"];
+	        this.ClientBytes = source["ClientBytes"];
+	        this.ServerBytes = source["ServerBytes"];
+	        this.MissingBytes = source["MissingBytes"];
+	        this.Closed = source["Closed"];
 	    }
 	}
 

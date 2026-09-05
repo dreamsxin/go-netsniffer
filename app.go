@@ -26,6 +26,7 @@ import (
 	"github.com/dreamsxin/go-netsniffer/replay"
 	"github.com/dreamsxin/go-netsniffer/rewrite"
 	"github.com/dreamsxin/go-netsniffer/rule"
+	"github.com/dreamsxin/go-netsniffer/tcpstream"
 	"github.com/dreamsxin/go-netsniffer/websocket"
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/pcapgo"
@@ -67,6 +68,12 @@ type App struct {
 	serve     *proxy.Server
 	listener  net.Listener
 	tcphandle *pcap.Handle
+
+	// streams 只在开启流重组时非空。用原子指针而不是放在 lock 下：
+	// 抓包协程、事件分发协程与界面绑定都要读它，而 lock 会被
+	// 代理启停时的网络操作长时间持有
+	streams atomic.Pointer[tcpstream.Tracker]
+
 
 	dataChan chan *models.Packet
 	dropped  atomic.Int64
@@ -223,6 +230,8 @@ func (a *App) runLoop() {
 
 		case <-flushTicker.C:
 			flush()
+			a.pushTCPStreams()
+
 
 		case <-dropTicker.C:
 			if d := a.dropped.Load(); d > reportedDrops {
@@ -520,6 +529,71 @@ func (a *App) SaveWebSocketConfig(cfg models.WebSocketConfig) *events.Event {
 	}
 	return &events.Event{Type: events.NOTICE, Code: 0,
 		Message: fmt.Sprintf("WebSocket 帧解析已开启，单帧最多留存 %d 字节；已建立的连接需重连后生效", cfg.MaxPayloadBytes)}
+}
+
+// pushTCPStreams 只在流表确有变化时推送，否则空转会让界面每秒重排 10 次。
+// 推送的是不含载荷的摘要，载荷由界面按需调用 GetTCPStream 拉取。
+func (a *App) pushTCPStreams() {
+	tracker := a.streams.Load()
+	if tracker == nil || a.ctx == nil || !tracker.TakeDirty() {
+		return
+	}
+	runtime.EventsEmit(a.ctx, "TCPStreams", tracker.Summaries())
+}
+
+// GetTCPStreams 返回当前流表摘要，供界面初始化时拉取一次。
+func (a *App) GetTCPStreams() []models.TCPStreamSummary {
+	tracker := a.streams.Load()
+	if tracker == nil {
+		return nil
+	}
+	return tracker.Summaries()
+}
+
+// GetTCPStream 返回单条流的双向载荷，即"跟随流"视图的内容。
+// 载荷按需拉取而不随列表推送：流是长期变化的，
+// 每次刷新都带上载荷会让 IPC 传输量高出几个数量级。
+func (a *App) GetTCPStream(id string) *models.TCPStreamDetail {
+	tracker := a.streams.Load()
+	if tracker == nil {
+		return nil
+	}
+	detail, ok := tracker.Detail(id)
+	if !ok {
+		return nil
+	}
+	return &detail
+}
+
+// ResetTCPStreams 清空已记录的流
+func (a *App) ResetTCPStreams() *events.Event {
+	if tracker := a.streams.Load(); tracker != nil {
+		tracker.Reset()
+		a.pushTCPStreams()
+	}
+	return nil
+}
+
+// SaveTCPStreamConfig 保存流重组配置。
+// 重组器在启动抓包时按配置构造，改动需要重启抓包才生效。
+func (a *App) SaveTCPStreamConfig(cfg models.TCPStreamConfig) *events.Event {
+	cfg.Normalize()
+
+	a.configMu.Lock()
+	a.config.IP.TCPStream = cfg
+	running := a.config.IP.Status == statusRunning
+	a.configMu.Unlock()
+	a.saveConfig()
+
+	if running {
+		return &events.Event{Type: events.NOTICE, Code: 0,
+			Message: "已保存，需要点击“停止服务”再“启动服务”后才会生效"}
+	}
+	if !cfg.Enabled {
+		return &events.Event{Type: events.NOTICE, Code: 0, Message: "TCP 流重组已关闭"}
+	}
+	return &events.Event{Type: events.NOTICE, Code: 0,
+		Message: fmt.Sprintf("TCP 流重组已开启，最多跟踪 %d 条流，单向留存 %d 字节", cfg.MaxStreams, cfg.MaxStreamBytes)}
 }
 
 // GetStatus 返回当前运行状态，供界面初始化时拉取一次。
@@ -957,15 +1031,35 @@ func (a *App) StartIPCapture(device string) {
 
 	packetSource := gopacket.NewPacketSource(handle, handle.LinkType())
 	packets := packetSource.Packets()
+
+	// 流重组按需开启：它要为每条连接维护缓冲与乱序页，默认不开
+	var tracker *tcpstream.Tracker
+	if cfg.IP.TCPStream.Enabled {
+		tracker = tcpstream.New(cfg.IP.TCPStream)
+	}
+	a.streams.Store(tracker)
+
 	a.safeGo("IP 抓包", func() {
 		defer a.setIPStatus(statusStopped)
 		if pcapFile != nil {
 			defer pcapFile.Close()
 		}
+
+		// 空闲流不冲刷就会一直占着内存，半开连接也永远等不到 FIN
+		idleTicker := time.NewTicker(10 * time.Second)
+		defer idleTicker.Stop()
+		if tracker != nil {
+			defer tracker.FlushAll()
+		}
+
 		for {
 			select {
 			case <-a.ctx.Done():
 				return
+			case <-idleTicker.C:
+				if tracker != nil {
+					tracker.FlushIdle(time.Now())
+				}
 			case packet, ok := <-packets:
 				if !ok {
 					return
@@ -976,6 +1070,9 @@ func (a *App) StartIPCapture(device string) {
 						log.Println("写入 pcap 失败:", err)
 						pcapWriter = nil
 					}
+				}
+				if tracker != nil {
+					tracker.Assemble(packet)
 				}
 				a.emit(&models.Packet{
 					PacketType: models.PacketType_IP,

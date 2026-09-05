@@ -52,6 +52,8 @@ type IP struct {
 	// SavePcapFile 抓包时同步写入 pcap 文件，可直接用 Wireshark 打开。
 	// 采用流式写入，不占用额外内存。
 	SavePcapFile bool
+	// TCPStream 控制是否把报文重组成 TCP 流，默认关闭
+	TCPStream TCPStreamConfig
 }
 
 type Config struct {
@@ -110,6 +112,7 @@ func DefaultConfig() Config {
 			Promisc: true,
 			Timeout: 1000,
 			Filter:  "tcp and port 80",
+			TCPStream: DefaultTCPStreamConfig(),
 		},
 	}
 }
@@ -125,6 +128,7 @@ func (c *Config) Normalize() {
 		c.HTTP.MaxBodySize = d.HTTP.MaxBodySize
 	}
 	c.HTTP.WebSocket.Normalize()
+	c.IP.TCPStream.Normalize()
 	if c.IP.Snaplen <= 0 {
 		c.IP.Snaplen = d.IP.Snaplen
 	}
