@@ -2,7 +2,7 @@
 import { EventsOn } from '../wailsjs/runtime/runtime'
 import { ref, reactive, onMounted, onBeforeUnmount, computed } from 'vue'
 import { ElNotification } from 'element-plus'
-import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture, GetDataDir, CertStatus, Download, ExportHAR, Replay, SaveRewriteRules, SaveDecryptRule, DefaultRewriteRules, DefaultDecryptRule, GetStatus, GetPendingBreakpoints, ResolveBreakpoint, ReleaseAllBreakpoints, SaveBreakpointConfig, SaveWebSocketConfig, GetTCPStreams, GetTCPStream, ResetTCPStreams, SaveTCPStreamConfig, CopyAsCurl, SaveMapRules, DefaultMapRules } from '../wailsjs/go/main/App'
+import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture, GetDataDir, CertStatus, Download, ExportHAR, Replay, SaveRewriteRules, SaveDecryptRule, DefaultRewriteRules, DefaultDecryptRule, GetStatus, GetPendingBreakpoints, ResolveBreakpoint, ReleaseAllBreakpoints, SaveBreakpointConfig, SaveWebSocketConfig, GetTCPStreams, GetTCPStream, ResetTCPStreams, SaveTCPStreamConfig, CopyAsCurl, SaveMapRules, DefaultMapRules, SaveThrottleConfig } from '../wailsjs/go/main/App'
 
 const data = reactive({
   config: {
@@ -10,6 +10,7 @@ const data = reactive({
     HTTP: {
       Breakpoint: { Enabled: false, OnRequest: true, OnResponse: false, URLRegex: "", Method: "", TimeoutSeconds: 60 },
       WebSocket: { Enabled: false, MaxPayloadBytes: 4096 },
+      Throttle: { Enabled: false, DownKbps: 400, UpKbps: 400, LatencyMs: 200, URLRegex: "" },
     },
     IP: {
       TCPStream: { Enabled: false, MaxStreamBytes: 65536, MaxStreams: 256, IdleSeconds: 60 },
@@ -21,7 +22,7 @@ const data = reactive({
   dataDir: "",
   cert: { Generated: false, TrustedScopes: [], CertPath: "", NotAfter: "" },
   // status 由后端推送：代理可能自己异常停止，只在点击后刷新会显示错
-  status: { HTTPStatus: 0, IPStatus: 0, Port: 0, AutoProxy: false, RewriteRuleCount: 0, MapRuleCount: 0, BreakpointEnabled: false, PendingBreakpoints: 0 },
+  status: { HTTPStatus: 0, IPStatus: 0, Port: 0, AutoProxy: false, RewriteRuleCount: 0, MapRuleCount: 0, ThrottleActive: false, BreakpointEnabled: false, PendingBreakpoints: 0 },
   // 被断点挂住的请求，后端推送
   breakpoints: [],
   bpEdit: {
@@ -820,6 +821,26 @@ function saveMapRules() {
   SaveMapRules(data.config.HTTP.MapRules || '').then(notifyResult)
 }
 
+// 预设对应常见链路，省得用户自己猜该填多少
+const throttlePresets = [
+  { label: 'GPRS', DownKbps: 50, UpKbps: 20, LatencyMs: 500 },
+  { label: '3G', DownKbps: 400, UpKbps: 400, LatencyMs: 200 },
+  { label: '4G', DownKbps: 4000, UpKbps: 3000, LatencyMs: 60 },
+  { label: 'DSL', DownKbps: 2000, UpKbps: 500, LatencyMs: 20 },
+]
+
+// 只填数值不自动保存：让用户看清参数再决定是否提交
+function applyThrottlePreset(p) {
+  Object.assign(data.config.HTTP.Throttle, {
+    DownKbps: p.DownKbps, UpKbps: p.UpKbps, LatencyMs: p.LatencyMs,
+  })
+}
+
+function saveThrottleConfig() {
+  SaveThrottleConfig(data.config.HTTP.Throttle).then(notifyResult)
+}
+
+
 function resetMapRules() {
   DefaultMapRules().then(text => {
     data.config.HTTP.MapRules = text
@@ -951,6 +972,9 @@ function stopIPCapture() {
             <el-tag v-if="data.status.MapRuleCount > 0" type="danger" effect="dark">
               映射 {{ data.status.MapRuleCount }} 条
             </el-tag>
+            <el-tag v-if="data.status.ThrottleActive" type="warning" effect="dark">
+              弱网模拟中
+            </el-tag>
             <el-tag v-if="data.status.BreakpointEnabled" type="warning" effect="dark">
               断点已开启{{ data.status.PendingBreakpoints > 0 ? ` · ${data.status.PendingBreakpoints} 个待处理` : '' }}
             </el-tag>
@@ -1039,6 +1063,47 @@ function stopIPCapture() {
                 只有第一条命中的规则生效。URLRegex 与 Method 必须至少填一个，否则会作用于所有流量。
                 local 的文件读不到时返回 502 并说明原因，而不是放行到线上。
                 保存后立即生效；JSON 有误时不会写入，并提示具体原因。
+              </el-text>
+            </el-collapse-item>
+            <el-collapse-item name="throttle">
+              <template #title>
+                <span>弱网模拟（限带宽、加延迟，调试用，默认关闭）</span>
+              </template>
+              <el-space wrap>
+                <el-switch v-model="data.config.HTTP.Throttle.Enabled" inline-prompt active-text="启用限速"
+                  inactive-text="启用限速" />
+                <el-text>下行</el-text>
+                <el-input-number v-model="data.config.HTTP.Throttle.DownKbps" :min="0" :max="1000000" :controls="false"
+                  aria-label="下行带宽">
+                  <template #suffix><span>kbps</span></template>
+                </el-input-number>
+                <el-text>上行</el-text>
+                <el-input-number v-model="data.config.HTTP.Throttle.UpKbps" :min="0" :max="1000000" :controls="false"
+                  aria-label="上行带宽">
+                  <template #suffix><span>kbps</span></template>
+                </el-input-number>
+                <el-text>延迟</el-text>
+                <el-input-number v-model="data.config.HTTP.Throttle.LatencyMs" :min="0" :max="60000" :controls="false"
+                  aria-label="额外延迟">
+                  <template #suffix><span>ms</span></template>
+                </el-input-number>
+              </el-space>
+              <el-space wrap style="margin-top: 8px">
+                <el-input v-model="data.config.HTTP.Throttle.URLRegex" style="width: 300px"
+                  placeholder="留空对全部流量生效">
+                  <template #prepend>URL 正则</template>
+                </el-input>
+                <el-button type="primary" size="small" @click="saveThrottleConfig">保存配置</el-button>
+                <el-text size="small" type="info">预设</el-text>
+                <el-button v-for="p in throttlePresets" :key="p.label" size="small"
+                  @click="applyThrottlePreset(p)">{{ p.label }}</el-button>
+              </el-space>
+              <el-text size="small" type="info">
+                带宽或延迟填 0 表示该项不限；三项都是 0 时即使开着开关也等于没限速。
+                带宽是全局共享的，与真实链路一致：并发下载会互相抢占，而不是每条连接各限一份。
+                延迟按每个请求叠加一次，客户端断开时会立即停止等待。
+                WebSocket 的帧流不参与限速，否则连接会直接不可用。
+                保存后立即生效，已在传输中的响应保持原速率。
               </el-text>
             </el-collapse-item>
             <el-collapse-item name="breakpoint">

@@ -42,6 +42,8 @@ type HTTP struct {
 	Breakpoint BreakpointConfig
 	// WebSocket 控制是否解析 WebSocket 帧，默认关闭
 	WebSocket WebSocketConfig
+	// Throttle 是弱网模拟，默认关闭
+	Throttle ThrottleConfig
 }
 
 type IP struct {
@@ -84,6 +86,9 @@ type AppStatus struct {
 	// BreakpointEnabled 与 PendingBreakpoints 用于提醒用户断点正开着、有请求被挂住
 	BreakpointEnabled  bool `json:"BreakpointEnabled"`
 	PendingBreakpoints int  `json:"PendingBreakpoints"`
+	// ThrottleActive 表示弱网模拟正在生效。开着忘了关会让人误判性能问题，
+	// 因此界面要一直显示
+	ThrottleActive bool `json:"ThrottleActive"`
 }
 
 // CertStatus 描述根证书的真实状态，供界面给出准确提示。
@@ -112,6 +117,7 @@ func DefaultConfig() Config {
 			MapRules:     DefaultMapRules,
 			Breakpoint:   DefaultBreakpointConfig(),
 			WebSocket:    DefaultWebSocketConfig(),
+			Throttle:     DefaultThrottleConfig(),
 		},
 		IP: IP{
 			Snaplen: 1600, // 覆盖标准以太网帧的完整长度
@@ -134,6 +140,7 @@ func (c *Config) Normalize() {
 		c.HTTP.MaxBodySize = d.HTTP.MaxBodySize
 	}
 	c.HTTP.WebSocket.Normalize()
+	c.HTTP.Throttle.Normalize()
 	c.IP.TCPStream.Normalize()
 	if c.IP.Snaplen <= 0 {
 		c.IP.Snaplen = d.IP.Snaplen

@@ -122,6 +122,10 @@ export function SaveTCPStreamConfig(arg1) {
   return window['go']['main']['App']['SaveTCPStreamConfig'](arg1);
 }
 
+export function SaveThrottleConfig(arg1) {
+  return window['go']['main']['App']['SaveThrottleConfig'](arg1);
+}
+
 export function SaveWebSocketConfig(arg1) {
   return window['go']['main']['App']['SaveWebSocketConfig'](arg1);
 }

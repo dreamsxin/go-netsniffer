@@ -52,6 +52,14 @@ type Mapper interface {
 	Apply(req *http.Request) (*http.Response, []string)
 }
 
+// Throttler 模拟弱网：增加延迟并限制带宽。
+type Throttler interface {
+	// ApplyRequest 施加延迟与上行限速，会阻塞当前 goroutine
+	ApplyRequest(req *http.Request)
+	// ApplyResponse 对响应体施加下行限速
+	ApplyResponse(resp *http.Response)
+}
+
 // WSObserver 观察 WebSocket 帧。
 //
 // goproxy 检测到 101 后会把 resp.Body 断言成 io.ReadWriter 直接对拷，
@@ -82,6 +90,7 @@ type Hooks struct {
 	Rewriter Rewriter
 	Mapper   Mapper
 	Breaker  Breaker
+	Throttle Throttler
 	WS       WSObserver
 }
 
@@ -151,6 +160,7 @@ func New(authorityName string, hooks Hooks, opts Options) (*Server, error) {
 	}
 	h, rules := hooks.Handler, hooks.Rules
 	rewriter, mapper, breaker, ws := hooks.Rewriter, hooks.Mapper, hooks.Breaker, hooks.WS
+	throttler := hooks.Throttle
 
 	ca, err := loadCA()
 	if err != nil {
@@ -209,6 +219,10 @@ func New(authorityName string, hooks Hooks, opts Options) (*Server, error) {
 				// 已经没有"放行到网络"这件事可做了。
 				// 响应仍会走 OnResponse，因此响应断点与记录照常生效。
 				h.Request(req, sessionID(ctx), rewritten)
+				// 本地响应也要受弱网影响，否则测出来的加载表现不真实
+				if throttler != nil {
+					throttler.ApplyRequest(req)
+				}
 				return req, mapped
 			}
 		}
@@ -217,11 +231,16 @@ func New(authorityName string, hooks Hooks, opts Options) (*Server, error) {
 		if breaker != nil {
 			if breaker.InterceptRequest(req, sessionID(ctx)) == models.BreakpointAbort {
 				h.Request(req, sessionID(ctx), rewritten)
+				// 用户主动中止，不再叠加人为延迟
 				return req, abortResponse(req, "请求已被断点中止")
 			}
 		}
 
 		h.Request(req, sessionID(ctx), rewritten)
+		// 限速放在记录之后：先让界面看到这条请求，再开始拖慢它
+		if throttler != nil {
+			throttler.ApplyRequest(req)
+		}
 		return req, nil
 	})
 
@@ -248,8 +267,15 @@ func New(authorityName string, hooks Hooks, opts Options) (*Server, error) {
 
 		h.Response(resp, sessionID(ctx), duration, rewritten)
 
+		// 限速在记录之后：列表里的 Content-Length 等信息不受影响，
+		// 只是数据到达客户端的速度被拖慢
+		if throttler != nil {
+			throttler.ApplyResponse(resp)
+		}
+
 		// 记录之后再包装 Body：101 响应之后才是帧流，
-		// 包装必须发生在 goproxy 断言 io.ReadWriter 之前
+		// 包装必须发生在 goproxy 断言 io.ReadWriter 之前。
+		// 限速器已跳过 101，因此两者不会互相干扰
 		if ws != nil {
 			ws.WrapWebSocket(resp, sessionID(ctx))
 		}

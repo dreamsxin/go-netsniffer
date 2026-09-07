@@ -63,6 +63,8 @@ export function SaveRewriteRules(arg1:string):Promise<events.Event>;
 
 export function SaveTCPStreamConfig(arg1:models.TCPStreamConfig):Promise<events.Event>;
 
+export function SaveThrottleConfig(arg1:models.ThrottleConfig):Promise<events.Event>;
+
 export function SaveWebSocketConfig(arg1:models.WebSocketConfig):Promise<events.Event>;
 
 export function SetConfig(arg1:string,arg2:models.Config):Promise<void>;

@@ -28,6 +28,7 @@ import (
 	"github.com/dreamsxin/go-netsniffer/rewrite"
 	"github.com/dreamsxin/go-netsniffer/rule"
 	"github.com/dreamsxin/go-netsniffer/tcpstream"
+	"github.com/dreamsxin/go-netsniffer/throttle"
 	"github.com/dreamsxin/go-netsniffer/websocket"
 	"github.com/gopacket/gopacket"
 	"github.com/gopacket/gopacket/pcapgo"
@@ -41,7 +42,7 @@ import (
 const authorityName string = "GoNetSniffer Proxy Authority"
 
 // appVersion 写入导出文件的 creator 信息
-const appVersion = "0.2.0"
+const appVersion = "0.3.0"
 
 // 运行状态
 const (
@@ -64,6 +65,8 @@ type App struct {
 	rewrites *rewrite.Set
 	// mappings 是 Map Local / Map Remote 规则，支持热更新
 	mappings *mapping.Set
+	// throttle 是弱网模拟，支持热更新
+	throttle *throttle.Limiter
 	// breakpoints 管理断点。它会真的阻塞被代理的连接，默认关闭
 	breakpoints *breakpoint.Manager
 
@@ -92,6 +95,7 @@ func NewApp() *App {
 		rules:    rule.New(cfg.HTTP.Rule),
 		rewrites: rewrite.New(cfg.HTTP.RewriteRules),
 		mappings: mapping.New(cfg.HTTP.MapRules),
+		throttle: throttle.New(cfg.HTTP.Throttle),
 		dataChan: make(chan *models.Packet, 4096),
 	}
 	// 待处理队列变化时推给界面，否则用户不知道有请求被挂住了
@@ -624,6 +628,42 @@ func (a *App) SaveTCPStreamConfig(cfg models.TCPStreamConfig) *events.Event {
 		Message: fmt.Sprintf("TCP 流重组已开启，最多跟踪 %d 条流，单向留存 %d 字节", cfg.MaxStreams, cfg.MaxStreamBytes)}
 }
 
+// SaveThrottleConfig 保存弱网模拟配置。
+// 限速器在每个请求上读当前配置，无需重启服务；
+// 已经在传输中的响应保持原速率。
+func (a *App) SaveThrottleConfig(cfg models.ThrottleConfig) *events.Event {
+	if err := a.throttle.Load(cfg); err != nil {
+		return &events.Event{Type: events.ERROR, Code: 11,
+			Message: fmt.Sprintf("URLRegex 无效: %s", err)}
+	}
+	// Load 会把越界值收回范围，取回来再存
+	applied := a.throttle.Config()
+
+	a.configMu.Lock()
+	a.config.HTTP.Throttle = applied
+	a.configMu.Unlock()
+	a.saveConfig()
+	a.pushStatus()
+
+	if !applied.Effective() {
+		if applied.Enabled {
+			return &events.Event{Type: events.NOTICE, Code: 0,
+				Message: "已保存，但带宽与延迟都是 0，等于没有限速"}
+		}
+		return &events.Event{Type: events.NOTICE, Code: 0, Message: "弱网模拟已关闭"}
+	}
+	return &events.Event{Type: events.NOTICE, Code: 0,
+		Message: fmt.Sprintf("弱网模拟已开启：下行 %s，上行 %s，延迟 %d ms",
+			kbpsText(applied.DownKbps), kbpsText(applied.UpKbps), applied.LatencyMs)}
+}
+
+func kbpsText(kbps int) string {
+	if kbps <= 0 {
+		return "不限"
+	}
+	return fmt.Sprintf("%d kbps", kbps)
+}
+
 // GetStatus 返回当前运行状态，供界面初始化时拉取一次。
 func (a *App) GetStatus() models.AppStatus {
 	cfg := a.snapshot()
@@ -638,6 +678,7 @@ func (a *App) GetStatus() models.AppStatus {
 
 		BreakpointEnabled:  cfg.HTTP.Breakpoint.Enabled,
 		PendingBreakpoints: a.breakpoints.PendingCount(),
+		ThrottleActive:     a.throttle.Effective(),
 	}
 }
 
@@ -681,6 +722,9 @@ func (a *App) SetConfig(field string, config models.Config) {
 	}
 	if err := a.mappings.Load(config.HTTP.MapRules); err != nil {
 		a.FireErrorEvent(10, err.Error())
+	}
+	if err := a.throttle.Load(config.HTTP.Throttle); err != nil {
+		a.FireErrorEvent(11, fmt.Sprintf("弱网模拟的 URLRegex 无效: %s", err))
 	}
 
 	// 这几项在构造代理时一次性生效，改完必须重启服务，
@@ -797,6 +841,7 @@ func (a *App) StartProxy() *events.Event {
 		Rewriter: a.rewrites,
 		Mapper:   a.mappings,
 		Breaker:  a.breakpoints,
+		Throttle: a.throttle,
 		WS:       wsObserver{app: a},
 	}, proxy.Options{
 		UpstreamProxy: cfg.HTTP.UpstreamProxy,

@@ -67,6 +67,7 @@ export namespace models {
 	    MapRuleCount: number;
 	    BreakpointEnabled: boolean;
 	    PendingBreakpoints: number;
+	    ThrottleActive: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new AppStatus(source);
@@ -83,6 +84,7 @@ export namespace models {
 	        this.MapRuleCount = source["MapRuleCount"];
 	        this.BreakpointEnabled = source["BreakpointEnabled"];
 	        this.PendingBreakpoints = source["PendingBreakpoints"];
+	        this.ThrottleActive = source["ThrottleActive"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -242,6 +244,26 @@ export namespace models {
 		    return a;
 		}
 	}
+	export class ThrottleConfig {
+	    Enabled: boolean;
+	    DownKbps: number;
+	    UpKbps: number;
+	    LatencyMs: number;
+	    URLRegex?: string;
+	
+	    static createFrom(source: any = {}) {
+	        return new ThrottleConfig(source);
+	    }
+	
+	    constructor(source: any = {}) {
+	        if ('string' === typeof source) source = JSON.parse(source);
+	        this.Enabled = source["Enabled"];
+	        this.DownKbps = source["DownKbps"];
+	        this.UpKbps = source["UpKbps"];
+	        this.LatencyMs = source["LatencyMs"];
+	        this.URLRegex = source["URLRegex"];
+	    }
+	}
 	export class WebSocketConfig {
 	    Enabled: boolean;
 	    MaxPayloadBytes: number;
@@ -273,6 +295,7 @@ export namespace models {
 	    MapRules: string;
 	    Breakpoint: BreakpointConfig;
 	    WebSocket: WebSocketConfig;
+	    Throttle: ThrottleConfig;
 	
 	    static createFrom(source: any = {}) {
 	        return new HTTP(source);
@@ -296,6 +319,7 @@ export namespace models {
 	        this.MapRules = source["MapRules"];
 	        this.Breakpoint = this.convertValues(source["Breakpoint"], BreakpointConfig);
 	        this.WebSocket = this.convertValues(source["WebSocket"], WebSocketConfig);
+	        this.Throttle = this.convertValues(source["Throttle"], ThrottleConfig);
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {
@@ -523,6 +547,7 @@ export namespace models {
 	        this.Closed = source["Closed"];
 	    }
 	}
+	
 
 }
 
