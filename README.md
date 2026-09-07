@@ -52,6 +52,12 @@ wails build -nsis
 ![screenshot-3](https://github.com/dreamsxin/go-netsniffer/blob/main/screenshot/screenshot-03.png?raw=true)
 ![screenshot-4](https://github.com/dreamsxin/go-netsniffer/blob/main/screenshot/screenshot-04.png?raw=true)
 
+## 开源协议
+
+[BSD 3-Clause](LICENSE)
+
+主要依赖同为宽松协议：goproxy 与 gopacket 为 BSD-3-Clause，Wails、Vue、Element Plus 为 MIT。
+
 Donation
 --------
 
