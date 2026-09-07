@@ -18,6 +18,10 @@ export function DefaultDecryptRule() {
   return window['go']['main']['App']['DefaultDecryptRule']();
 }
 
+export function DefaultMapRules() {
+  return window['go']['main']['App']['DefaultMapRules']();
+}
+
 export function DefaultRewriteRules() {
   return window['go']['main']['App']['DefaultRewriteRules']();
 }
@@ -104,6 +108,10 @@ export function SaveBreakpointConfig(arg1) {
 
 export function SaveDecryptRule(arg1) {
   return window['go']['main']['App']['SaveDecryptRule'](arg1);
+}
+
+export function SaveMapRules(arg1) {
+  return window['go']['main']['App']['SaveMapRules'](arg1);
 }
 
 export function SaveRewriteRules(arg1) {

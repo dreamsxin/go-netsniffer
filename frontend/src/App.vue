@@ -2,7 +2,7 @@
 import { EventsOn } from '../wailsjs/runtime/runtime'
 import { ref, reactive, onMounted, onBeforeUnmount, computed } from 'vue'
 import { ElNotification } from 'element-plus'
-import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture, GetDataDir, CertStatus, Download, ExportHAR, Replay, SaveRewriteRules, SaveDecryptRule, DefaultRewriteRules, DefaultDecryptRule, GetStatus, GetPendingBreakpoints, ResolveBreakpoint, ReleaseAllBreakpoints, SaveBreakpointConfig, SaveWebSocketConfig, GetTCPStreams, GetTCPStream, ResetTCPStreams, SaveTCPStreamConfig, CopyAsCurl } from '../wailsjs/go/main/App'
+import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture, GetDataDir, CertStatus, Download, ExportHAR, Replay, SaveRewriteRules, SaveDecryptRule, DefaultRewriteRules, DefaultDecryptRule, GetStatus, GetPendingBreakpoints, ResolveBreakpoint, ReleaseAllBreakpoints, SaveBreakpointConfig, SaveWebSocketConfig, GetTCPStreams, GetTCPStream, ResetTCPStreams, SaveTCPStreamConfig, CopyAsCurl, SaveMapRules, DefaultMapRules } from '../wailsjs/go/main/App'
 
 const data = reactive({
   config: {
@@ -21,7 +21,7 @@ const data = reactive({
   dataDir: "",
   cert: { Generated: false, TrustedScopes: [], CertPath: "", NotAfter: "" },
   // status 由后端推送：代理可能自己异常停止，只在点击后刷新会显示错
-  status: { HTTPStatus: 0, IPStatus: 0, Port: 0, AutoProxy: false, RewriteRuleCount: 0, BreakpointEnabled: false, PendingBreakpoints: 0 },
+  status: { HTTPStatus: 0, IPStatus: 0, Port: 0, AutoProxy: false, RewriteRuleCount: 0, MapRuleCount: 0, BreakpointEnabled: false, PendingBreakpoints: 0 },
   // 被断点挂住的请求，后端推送
   breakpoints: [],
   bpEdit: {
@@ -816,6 +816,26 @@ function saveRewriteRules() {
   SaveRewriteRules(data.config.HTTP.RewriteRules || '').then(notifyResult)
 }
 
+function saveMapRules() {
+  SaveMapRules(data.config.HTTP.MapRules || '').then(notifyResult)
+}
+
+function resetMapRules() {
+  DefaultMapRules().then(text => {
+    data.config.HTTP.MapRules = text
+    return SaveMapRules(text)
+  }).then(notifyResult)
+}
+
+function formatMapRules() {
+  try {
+    data.config.HTTP.MapRules = JSON.stringify(JSON.parse(data.config.HTTP.MapRules || '[]'), null, 2)
+  } catch (e) {
+    ElNotification({ title: 'Error', message: `不是合法 JSON：${e.message}`, type: 'error' })
+  }
+}
+
+
 function resetRewriteRules() {
   DefaultRewriteRules().then(text => {
     data.config.HTTP.RewriteRules = text
@@ -928,6 +948,9 @@ function stopIPCapture() {
             <el-tag v-if="data.status.RewriteRuleCount > 0" type="danger" effect="plain">
               改包 {{ data.status.RewriteRuleCount }} 条
             </el-tag>
+            <el-tag v-if="data.status.MapRuleCount > 0" type="danger" effect="dark">
+              映射 {{ data.status.MapRuleCount }} 条
+            </el-tag>
             <el-tag v-if="data.status.BreakpointEnabled" type="warning" effect="dark">
               断点已开启{{ data.status.PendingBreakpoints > 0 ? ` · ${data.status.PendingBreakpoints} 个待处理` : '' }}
             </el-tag>
@@ -991,6 +1014,30 @@ function stopIPCapture() {
                 StatusCode 改写响应状态码。
                 匹配条件全留空会作用于所有流量，请至少填一个。
                 压缩过的响应会先解压再替换，并去掉 Content-Encoding。
+                保存后立即生效；JSON 有误时不会写入，并提示具体原因。
+              </el-text>
+            </el-collapse-item>
+            <el-collapse-item name="mapping">
+              <template #title>
+                <span>映射（Map Local / Map Remote，改变请求去哪里、响应从哪来）</span>
+              </template>
+              <el-input v-model="data.config.HTTP.MapRules" type="textarea" :rows="12"
+                placeholder="JSON 数组，见下方字段说明" />
+              <el-space wrap style="margin-top: 8px">
+                <el-button type="primary" size="small" @click="saveMapRules">保存规则</el-button>
+                <el-button size="small" @click="formatMapRules">格式化</el-button>
+                <el-button size="small" @click="resetMapRules">恢复默认</el-button>
+              </el-space>
+              <el-text size="small" type="info">
+                与改包的区别：改包是在真实往返的基础上改内容，映射改变的是请求去哪里、响应从哪来。
+                公共字段：Enabled 是否启用；Name 备注；Kind 为 local 或 remote；
+                URLRegex 匹配完整 URL 的正则；Method 限定方法。
+                local 字段：File 本地文件路径（每次请求都重新读，改完文件立即生效）；
+                StatusCode 留空按 200；ContentType 留空按后缀推断；Headers 额外响应头。
+                remote 字段：To 目标地址如 http://127.0.0.1:8080，带路径时该路径作为前缀；
+                RewriteHost 是否把 Host 头也改成目标（默认不改，因为对端常靠原 Host 做虚拟主机匹配）。
+                只有第一条命中的规则生效。URLRegex 与 Method 必须至少填一个，否则会作用于所有流量。
+                local 的文件读不到时返回 502 并说明原因，而不是放行到线上。
                 保存后立即生效；JSON 有误时不会写入，并提示具体原因。
               </el-text>
             </el-collapse-item>

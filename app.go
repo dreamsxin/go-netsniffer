@@ -20,6 +20,7 @@ import (
 	"github.com/dreamsxin/go-netsniffer/download"
 	"github.com/dreamsxin/go-netsniffer/events"
 	"github.com/dreamsxin/go-netsniffer/export"
+	"github.com/dreamsxin/go-netsniffer/mapping"
 	"github.com/dreamsxin/go-netsniffer/models"
 	"github.com/dreamsxin/go-netsniffer/paths"
 	"github.com/dreamsxin/go-netsniffer/proxy"
@@ -61,6 +62,8 @@ type App struct {
 	rules *rule.Set
 	// rewrites 是改包规则，同样支持热更新
 	rewrites *rewrite.Set
+	// mappings 是 Map Local / Map Remote 规则，支持热更新
+	mappings *mapping.Set
 	// breakpoints 管理断点。它会真的阻塞被代理的连接，默认关闭
 	breakpoints *breakpoint.Manager
 
@@ -88,6 +91,7 @@ func NewApp() *App {
 		config:   cfg,
 		rules:    rule.New(cfg.HTTP.Rule),
 		rewrites: rewrite.New(cfg.HTTP.RewriteRules),
+		mappings: mapping.New(cfg.HTTP.MapRules),
 		dataChan: make(chan *models.Packet, 4096),
 	}
 	// 待处理队列变化时推给界面，否则用户不知道有请求被挂住了
@@ -431,6 +435,30 @@ func (a *App) SaveRewriteRules(text string) *events.Event {
 		Message: fmt.Sprintf("改包规则已保存，当前生效 %d 条", count)}
 }
 
+// SaveMapRules 保存映射规则并同步返回校验结果。
+func (a *App) SaveMapRules(text string) *events.Event {
+	// 先校验，不合法就不写入配置，避免坏规则被持久化
+	if err := a.mappings.Load(text); err != nil {
+		return &events.Event{Type: events.ERROR, Code: 10, Message: err.Error()}
+	}
+
+	a.configMu.Lock()
+	a.config.HTTP.MapRules = text
+	a.configMu.Unlock()
+	a.saveConfig()
+	a.pushStatus()
+
+	count := a.mappings.RuleCount()
+	if count == 0 {
+		return &events.Event{Type: events.NOTICE, Code: 0, Message: "映射规则已保存，当前没有启用的规则"}
+	}
+	return &events.Event{Type: events.NOTICE, Code: 0,
+		Message: fmt.Sprintf("映射规则已保存，当前生效 %d 条。命中的请求不会按原地址发出", count)}
+}
+
+// DefaultMapRules 供界面"恢复默认"使用
+func (a *App) DefaultMapRules() string { return models.DefaultMapRules }
+
 // SaveDecryptRule 保存解密规则。语法错误的行会被忽略，因此不会失败。
 func (a *App) SaveDecryptRule(text string) *events.Event {
 	a.rules.Load(text)
@@ -606,6 +634,7 @@ func (a *App) GetStatus() models.AppStatus {
 		AutoProxy:        cfg.HTTP.AutoProxy,
 		Cert:             a.CertStatus(),
 		RewriteRuleCount: a.rewrites.RuleCount(),
+		MapRuleCount:     a.mappings.RuleCount(),
 
 		BreakpointEnabled:  cfg.HTTP.Breakpoint.Enabled,
 		PendingBreakpoints: a.breakpoints.PendingCount(),
@@ -649,6 +678,9 @@ func (a *App) SetConfig(field string, config models.Config) {
 	// 静默失败会让人以为改包没作用却查不出原因
 	if err := a.rewrites.Load(config.HTTP.RewriteRules); err != nil {
 		a.FireErrorEvent(7, err.Error())
+	}
+	if err := a.mappings.Load(config.HTTP.MapRules); err != nil {
+		a.FireErrorEvent(10, err.Error())
 	}
 
 	// 这几项在构造代理时一次性生效，改完必须重启服务，
@@ -759,7 +791,14 @@ func (a *App) StartProxy() *events.Event {
 	}
 
 	cfg := a.snapshot()
-	serve, err := proxy.New(authorityName, handler.NewRequestLogger(packetSink{app: a}), a.rules, a.rewrites, a.breakpoints, wsObserver{app: a}, proxy.Options{
+	serve, err := proxy.New(authorityName, proxy.Hooks{
+		Handler:  handler.NewRequestLogger(packetSink{app: a}),
+		Rules:    a.rules,
+		Rewriter: a.rewrites,
+		Mapper:   a.mappings,
+		Breaker:  a.breakpoints,
+		WS:       wsObserver{app: a},
+	}, proxy.Options{
 		UpstreamProxy: cfg.HTTP.UpstreamProxy,
 		ListenPort:    cfg.HTTP.Port,
 		AllowHTTP2:    cfg.HTTP.AllowHTTP2,

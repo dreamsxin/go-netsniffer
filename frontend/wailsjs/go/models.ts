@@ -64,6 +64,7 @@ export namespace models {
 	    AutoProxy: boolean;
 	    Cert: CertStatus;
 	    RewriteRuleCount: number;
+	    MapRuleCount: number;
 	    BreakpointEnabled: boolean;
 	    PendingBreakpoints: number;
 	
@@ -79,6 +80,7 @@ export namespace models {
 	        this.AutoProxy = source["AutoProxy"];
 	        this.Cert = this.convertValues(source["Cert"], CertStatus);
 	        this.RewriteRuleCount = source["RewriteRuleCount"];
+	        this.MapRuleCount = source["MapRuleCount"];
 	        this.BreakpointEnabled = source["BreakpointEnabled"];
 	        this.PendingBreakpoints = source["PendingBreakpoints"];
 	    }
@@ -268,6 +270,7 @@ export namespace models {
 	    AllowHTTP2: boolean;
 	    DownloadDir: string;
 	    RewriteRules: string;
+	    MapRules: string;
 	    Breakpoint: BreakpointConfig;
 	    WebSocket: WebSocketConfig;
 	
@@ -290,6 +293,7 @@ export namespace models {
 	        this.AllowHTTP2 = source["AllowHTTP2"];
 	        this.DownloadDir = source["DownloadDir"];
 	        this.RewriteRules = source["RewriteRules"];
+	        this.MapRules = source["MapRules"];
 	        this.Breakpoint = this.convertValues(source["Breakpoint"], BreakpointConfig);
 	        this.WebSocket = this.convertValues(source["WebSocket"], WebSocketConfig);
 	    }

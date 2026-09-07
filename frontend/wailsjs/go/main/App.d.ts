@@ -11,6 +11,8 @@ export function CopyAsCurl(arg1:models.HTTPPacket):Promise<events.Event>;
 
 export function DefaultDecryptRule():Promise<string>;
 
+export function DefaultMapRules():Promise<string>;
+
 export function DefaultRewriteRules():Promise<string>;
 
 export function DisableProxy():Promise<events.Event>;
@@ -54,6 +56,8 @@ export function ResolveBreakpoint(arg1:models.BreakpointResolution):Promise<even
 export function SaveBreakpointConfig(arg1:models.BreakpointConfig):Promise<events.Event>;
 
 export function SaveDecryptRule(arg1:string):Promise<events.Event>;
+
+export function SaveMapRules(arg1:string):Promise<events.Event>;
 
 export function SaveRewriteRules(arg1:string):Promise<events.Event>;
 

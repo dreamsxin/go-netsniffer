@@ -36,6 +36,8 @@ type HTTP struct {
 	// RewriteRules 是改包规则的 JSON 文本，见 RewriteRule。
 	// 用文本保存是为了让用户能整段复制粘贴与版本管理。
 	RewriteRules string
+	// MapRules 是 Map Local / Map Remote 规则的 JSON 文本，见 MapRule
+	MapRules string
 	// Breakpoint 是断点配置。断点会真的把请求挂住，默认关闭。
 	Breakpoint BreakpointConfig
 	// WebSocket 控制是否解析 WebSocket 帧，默认关闭
@@ -76,6 +78,9 @@ type AppStatus struct {
 	Cert CertStatus `json:"Cert"`
 	// RewriteRuleCount 是生效中的改包规则条数
 	RewriteRuleCount int `json:"RewriteRuleCount"`
+	// MapRuleCount 是生效中的映射规则条数。命中的请求不按原地址发出，
+	// 开着忘了关很容易让人误判接口行为，因此界面要一直显示
+	MapRuleCount int `json:"MapRuleCount"`
 	// BreakpointEnabled 与 PendingBreakpoints 用于提醒用户断点正开着、有请求被挂住
 	BreakpointEnabled  bool `json:"BreakpointEnabled"`
 	PendingBreakpoints int  `json:"PendingBreakpoints"`
@@ -104,6 +109,7 @@ func DefaultConfig() Config {
 			MaxBodySize: 1 << 20, // 1MB
 			Rule:         DefaultRule,
 			RewriteRules: DefaultRewriteRules,
+			MapRules:     DefaultMapRules,
 			Breakpoint:   DefaultBreakpointConfig(),
 			WebSocket:    DefaultWebSocketConfig(),
 		},

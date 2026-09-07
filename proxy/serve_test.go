@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -63,6 +64,32 @@ type noRewrite struct{}
 func (noRewrite) ApplyRequest(*http.Request) []string  { return nil }
 func (noRewrite) ApplyResponse(*http.Response) []string { return nil }
 
+// localMapper 模拟 Map Local：短路返回本地内容，请求不发到线上
+type localMapper struct{ body string }
+
+func (m localMapper) Apply(req *http.Request) (*http.Response, []string) {
+	return &http.Response{
+		Status:        "200 OK",
+		StatusCode:    200,
+		Proto:         "HTTP/1.1",
+		ProtoMajor:    1,
+		ProtoMinor:    1,
+		Request:       req,
+		Header:        http.Header{"Content-Type": []string{"text/plain"}},
+		Body:          io.NopCloser(strings.NewReader(m.body)),
+		ContentLength: int64(len(m.body)),
+	}, []string{"映射/local"}
+}
+
+// remoteMapper 模拟 Map Remote：把请求改指到另一个地址
+type remoteMapper struct{ host string }
+
+func (m remoteMapper) Apply(req *http.Request) (*http.Response, []string) {
+	req.URL.Scheme = "http"
+	req.URL.Host = m.host
+	return nil, []string{"映射/remote"}
+}
+
 // useTempCert 把证书路径指向临时目录并生成一份可用的根证书
 func useTempCert(t *testing.T) {
 	t.Helper()
@@ -83,9 +110,13 @@ func useTempCert(t *testing.T) {
 
 // startProxy 在随机端口上启动代理并返回其地址
 func startProxy(t *testing.T, h Handler, rules Rules) string {
+	return startProxyWithHooks(t, Hooks{Handler: h, Rules: rules, Rewriter: noRewrite{}})
+}
+
+func startProxyWithHooks(t *testing.T, hooks Hooks) string {
 	t.Helper()
 
-	srv, err := New("Test CA", h, rules, noRewrite{}, nil, nil, Options{})
+	srv, err := New("Test CA", hooks, Options{})
 	if err != nil {
 		t.Fatalf("创建代理失败: %v", err)
 	}
@@ -108,7 +139,7 @@ func TestNewRequiresCert(t *testing.T) {
 	keyPath = func() string { return filepath.Join(dir, "missing.key") }
 	defer func() { crtPath, keyPath = oldCrt, oldKey }()
 
-	if _, err := New("Test CA", &recordHandler{}, fixedRules(true), noRewrite{}, nil, nil, Options{}); err == nil {
+	if _, err := New("Test CA", Hooks{Handler: &recordHandler{}, Rules: fixedRules(true), Rewriter: noRewrite{}}, Options{}); err == nil {
 		t.Error("证书缺失时应返回错误")
 	}
 }
@@ -240,7 +271,7 @@ func TestProxyTunnelsWhenRuleDenies(t *testing.T) {
 func TestUpstreamProxyRejectsSelf(t *testing.T) {
 	useTempCert(t)
 
-	_, err := New("Test CA", &recordHandler{}, fixedRules(true), noRewrite{}, nil, nil, Options{
+	_, err := New("Test CA", Hooks{Handler: &recordHandler{}, Rules: fixedRules(true), Rewriter: noRewrite{}}, Options{
 		UpstreamProxy: "http://127.0.0.1:9000",
 		ListenPort:    9000,
 	})
@@ -252,9 +283,103 @@ func TestUpstreamProxyRejectsSelf(t *testing.T) {
 func TestUpstreamProxyRejectsInvalidAddress(t *testing.T) {
 	useTempCert(t)
 
-	if _, err := New("Test CA", &recordHandler{}, fixedRules(true), noRewrite{}, nil, nil, Options{
+	if _, err := New("Test CA", Hooks{Handler: &recordHandler{}, Rules: fixedRules(true), Rewriter: noRewrite{}}, Options{
 		UpstreamProxy: "not-a-url",
 	}); err == nil {
 		t.Error("非法上游代理地址应返回错误")
+	}
+}
+
+// Map Local 命中时请求不该发到线上，但响应仍要被记录下来。
+// 后者依赖 goproxy 对短路响应也会走响应处理链，值得用测试锁住。
+func TestMapLocalShortCircuitsAndStillRecords(t *testing.T) {
+	useTempCert(t)
+
+	var hits atomic.Int64
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		fmt.Fprint(w, "来自线上")
+	}))
+	defer origin.Close()
+
+	h := &recordHandler{}
+	addr := startProxyWithHooks(t, Hooks{
+		Handler: h, Rules: fixedRules(true), Rewriter: noRewrite{},
+		Mapper: localMapper{body: "来自本地"},
+	})
+
+	proxyURL, _ := url.Parse("http://" + addr)
+	client := &http.Client{
+		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+		Timeout:   10 * time.Second,
+	}
+	resp, err := client.Get(origin.URL)
+	if err != nil {
+		t.Fatalf("经代理请求失败: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if string(body) != "来自本地" {
+		t.Errorf("响应体 = %q, want %q", body, "来自本地")
+	}
+	if n := hits.Load(); n != 0 {
+		t.Errorf("Map Local 命中时不该访问线上, 实际访问 %d 次", n)
+	}
+
+	var hasRequest, hasResponse bool
+	for _, r := range h.all() {
+		switch r.kind {
+		case "request":
+			hasRequest = true
+		case "response":
+			hasResponse = true
+		}
+	}
+	if !hasRequest || !hasResponse {
+		t.Errorf("请求与响应都应被记录, 得到 %+v", h.all())
+	}
+}
+
+// Map Remote 应把请求转到新目标，客户端不知情
+func TestMapRemoteRedirectsToNewTarget(t *testing.T) {
+	useTempCert(t)
+
+	var mappedHits, originHits atomic.Int64
+	mapped := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mappedHits.Add(1)
+		fmt.Fprint(w, "来自映射目标")
+	}))
+	defer mapped.Close()
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		originHits.Add(1)
+		fmt.Fprint(w, "来自原始目标")
+	}))
+	defer origin.Close()
+
+	mappedURL, _ := url.Parse(mapped.URL)
+	addr := startProxyWithHooks(t, Hooks{
+		Handler: &recordHandler{}, Rules: fixedRules(true), Rewriter: noRewrite{},
+		Mapper: remoteMapper{host: mappedURL.Host},
+	})
+
+	proxyURL, _ := url.Parse("http://" + addr)
+	client := &http.Client{
+		Transport: &http.Transport{Proxy: http.ProxyURL(proxyURL)},
+		Timeout:   10 * time.Second,
+	}
+	resp, err := client.Get(origin.URL)
+	if err != nil {
+		t.Fatalf("经代理请求失败: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+
+	if string(body) != "来自映射目标" {
+		t.Errorf("响应体 = %q", body)
+	}
+	if mappedHits.Load() != 1 || originHits.Load() != 0 {
+		t.Errorf("映射目标应被访问 1 次、原目标 0 次, 实际 %d / %d",
+			mappedHits.Load(), originHits.Load())
 	}
 }

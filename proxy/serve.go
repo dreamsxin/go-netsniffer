@@ -44,6 +44,14 @@ type Rewriter interface {
 	ApplyResponse(resp *http.Response) []string
 }
 
+// Mapper 实现 Map Local 与 Map Remote。
+//
+// 返回非 nil 响应表示这次请求不发到线上，直接把它交给客户端；
+// 返回 nil 时可能已经改写了 req 的目标地址。
+type Mapper interface {
+	Apply(req *http.Request) (*http.Response, []string)
+}
+
 // WSObserver 观察 WebSocket 帧。
 //
 // goproxy 检测到 101 后会把 resp.Body 断言成 io.ReadWriter 直接对拷，
@@ -60,6 +68,21 @@ type Breaker interface {
 	InterceptResponse(resp *http.Response, id string) models.BreakpointAction
 	// ReleaseAll 在代理停止时放行所有等待中的请求，避免 goroutine 泄漏
 	ReleaseAll()
+}
+
+// Hooks 是代理运行时要回调的协作者。
+//
+// 用结构体而不是一长串参数：可选项越来越多时，
+// 位置参数的调用点全是 nil，读的人分不清哪个 nil 对应什么。
+type Hooks struct {
+	// Handler 与 Rules 必填
+	Handler Handler
+	Rules   Rules
+	// 以下均可为 nil，表示不启用该能力
+	Rewriter Rewriter
+	Mapper   Mapper
+	Breaker  Breaker
+	WS       WSObserver
 }
 
 // Options 控制代理的网络行为，零值表示使用默认值。
@@ -122,7 +145,13 @@ type Server struct {
 	tunnels map[net.Conn]struct{}
 }
 
-func New(authorityName string, h Handler, rules Rules, rewriter Rewriter, breaker Breaker, ws WSObserver, opts Options) (*Server, error) {
+func New(authorityName string, hooks Hooks, opts Options) (*Server, error) {
+	if hooks.Handler == nil || hooks.Rules == nil {
+		return nil, errors.New("代理初始化失败: Handler 与 Rules 必须提供")
+	}
+	h, rules := hooks.Handler, hooks.Rules
+	rewriter, mapper, breaker, ws := hooks.Rewriter, hooks.Mapper, hooks.Breaker, hooks.WS
+
 	ca, err := loadCA()
 	if err != nil {
 		return nil, err
@@ -170,7 +199,21 @@ func New(authorityName string, h Handler, rules Rules, rewriter Rewriter, breake
 			rewritten = rewriter.ApplyRequest(req)
 		}
 
-		// 断点在改写之后：界面上看到并可编辑的是改写后的内容
+		// 映射放在改写之后：改包规则的 URLRegex 因此匹配的是原始地址，
+		// 而不是被 Map Remote 换过的目标地址
+		if mapper != nil {
+			mapped, applied := mapper.Apply(req)
+			rewritten = append(rewritten, applied...)
+			if mapped != nil {
+				// Map Local 命中：请求不发到线上，跳过请求断点——
+				// 已经没有"放行到网络"这件事可做了。
+				// 响应仍会走 OnResponse，因此响应断点与记录照常生效。
+				h.Request(req, sessionID(ctx), rewritten)
+				return req, mapped
+			}
+		}
+
+		// 断点在改写与映射之后：界面上看到并可编辑的就是真正要发出去的请求
 		if breaker != nil {
 			if breaker.InterceptRequest(req, sessionID(ctx)) == models.BreakpointAbort {
 				h.Request(req, sessionID(ctx), rewritten)
