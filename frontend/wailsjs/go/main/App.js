@@ -10,6 +10,10 @@ export function CertStatus() {
   return window['go']['main']['App']['CertStatus']();
 }
 
+export function CopyAsCurl(arg1) {
+  return window['go']['main']['App']['CopyAsCurl'](arg1);
+}
+
 export function DefaultDecryptRule() {
   return window['go']['main']['App']['DefaultDecryptRule']();
 }

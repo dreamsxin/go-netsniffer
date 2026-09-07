@@ -901,6 +901,26 @@ func (a *App) Download(packet models.HTTPPacket) *events.Event {
 
 // ExportHAR 把界面上的记录导出为 HAR，Chrome DevTools 与 Charles 都能直接打开。
 // 记录由前端传入，避免后端再存一份同样的数据。
+// CopyAsCurl 把一条记录转成 curl 命令并放入剪贴板。
+// 命令在 Go 侧构造，便于单测，也保证与记录里的头、正文完全一致。
+func (a *App) CopyAsCurl(packet models.HTTPPacket) *events.Event {
+	cmd, err := export.Curl(packet)
+	if err != nil {
+		return &events.Event{Type: events.ERROR, Code: 9, Message: err.Error()}
+	}
+	if err := runtime.ClipboardSetText(a.ctx, cmd); err != nil {
+		return &events.Event{Type: events.ERROR, Code: 9, Message: fmt.Sprintf("写入剪贴板失败: %s", err)}
+	}
+
+	msg := "curl 命令已复制"
+	// 正文被截断时命令是不完整的，直接执行会发出错误的数据
+	if packet.HTTPPacketType == models.HTTPPacketType_REQUEST && packet.BodyTruncated {
+		msg += "。注意：原请求体已被截断，命令中的正文不完整"
+	}
+	msg += "。引号按 POSIX 规则转义，请在 bash / WSL / Git Bash 中执行"
+	return &events.Event{Type: events.NOTICE, Code: 0, Message: msg}
+}
+
 func (a *App) ExportHAR(packets []models.HTTPPacket) *events.Event {
 	if len(packets) == 0 {
 		return &events.Event{Type: events.ERROR, Code: 5, Message: "没有可导出的记录"}

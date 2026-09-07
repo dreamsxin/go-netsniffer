@@ -7,6 +7,8 @@ export function CertReady():Promise<boolean>;
 
 export function CertStatus():Promise<models.CertStatus>;
 
+export function CopyAsCurl(arg1:models.HTTPPacket):Promise<events.Event>;
+
 export function DefaultDecryptRule():Promise<string>;
 
 export function DefaultRewriteRules():Promise<string>;

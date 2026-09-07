@@ -2,7 +2,7 @@
 import { EventsOn } from '../wailsjs/runtime/runtime'
 import { ref, reactive, onMounted, onBeforeUnmount, computed } from 'vue'
 import { ElNotification } from 'element-plus'
-import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture, GetDataDir, CertStatus, Download, ExportHAR, Replay, SaveRewriteRules, SaveDecryptRule, DefaultRewriteRules, DefaultDecryptRule, GetStatus, GetPendingBreakpoints, ResolveBreakpoint, ReleaseAllBreakpoints, SaveBreakpointConfig, SaveWebSocketConfig, GetTCPStreams, GetTCPStream, ResetTCPStreams, SaveTCPStreamConfig } from '../wailsjs/go/main/App'
+import { GetConfig, SetConfig, GenerateCert, InstallCert, UninstallCert, StartProxy, StopProxy, Test, GetDevices, StartIPCapture, StopIPCapture, GetDataDir, CertStatus, Download, ExportHAR, Replay, SaveRewriteRules, SaveDecryptRule, DefaultRewriteRules, DefaultDecryptRule, GetStatus, GetPendingBreakpoints, ResolveBreakpoint, ReleaseAllBreakpoints, SaveBreakpointConfig, SaveWebSocketConfig, GetTCPStreams, GetTCPStream, ResetTCPStreams, SaveTCPStreamConfig, CopyAsCurl } from '../wailsjs/go/main/App'
 
 const data = reactive({
   config: {
@@ -49,6 +49,18 @@ const data = reactive({
     visible: false,
     loading: false,
     detail: null,
+  },
+  // view 是显示过滤：只影响看到什么，不丢弃任何已抓到的记录。
+  // 与配置里的抓取过滤不同，后者会在入库前直接丢弃且不可恢复。
+  view: {
+    keyword: "",
+    methods: [],
+    statusClasses: [],
+    kinds: [],
+    // deep 打开后关键字还会搜请求头与正文。正文可能很大，
+    // 逐条扫描明显更慢，因此默认只搜 URL 等短字段
+    deep: false,
+    onlyRewritten: false,
   },
 })
 
@@ -320,6 +332,97 @@ EventsOn("HTTPPackets", function (list) {
   }
   pushBatch(httpTableData, list)
 });
+
+// 关键字支持空格分隔的多个词，全部命中才算匹配；
+// 以 - 开头的词表示排除，例如 "api -png" 找带 api 又不含 png 的记录
+function parseTerms(keyword) {
+  const include = []
+  const exclude = []
+  for (const raw of keyword.toLowerCase().split(/\s+/)) {
+    if (!raw) {
+      continue
+    }
+    if (raw.startsWith('-')) {
+      if (raw.length > 1) {
+        exclude.push(raw.slice(1))
+      }
+      continue
+    }
+    include.push(raw)
+  }
+  return { include, exclude }
+}
+
+// 浅层只拼短字段，避免每次过滤都去扫可能上兆的正文
+function shallowHaystack(item) {
+  return [item.Method, item.Host, item.Path, item.URL,
+    item.ContentType, item.StatusCode, item.Proto].join(' ').toLowerCase()
+}
+
+function deepHaystack(item) {
+  const parts = [shallowHaystack(item)]
+  for (const header of [item.Header, item.RequestHeader]) {
+    if (!header) {
+      continue
+    }
+    for (const name of Object.keys(header)) {
+      parts.push(name, header[name].join(' '))
+    }
+  }
+  if (item.Body) {
+    parts.push(item.Body)
+  }
+  return parts.join(' ').toLowerCase()
+}
+
+const httpViewData = computed(() => {
+  const v = data.view
+  const { include, exclude } = parseTerms(v.keyword)
+  const hasKeyword = include.length > 0 || exclude.length > 0
+  const noFilter = !hasKeyword && v.methods.length === 0 &&
+    v.statusClasses.length === 0 && v.kinds.length === 0 && !v.onlyRewritten
+  if (noFilter) {
+    return httpTableData
+  }
+
+  return httpTableData.filter(item => {
+    if (v.methods.length && !v.methods.includes(item.Method)) {
+      return false
+    }
+    // 请求记录没有状态码，按状态过滤时它们无从判断，一律排除
+    if (v.statusClasses.length) {
+      const cls = item.StatusCode ? `${Math.floor(item.StatusCode / 100)}xx` : ''
+      if (!v.statusClasses.includes(cls)) {
+        return false
+      }
+    }
+    if (v.kinds.length && !v.kinds.includes(item.ResourceType || 'other')) {
+      return false
+    }
+    if (v.onlyRewritten && !(item.Rewritten && item.Rewritten.length)) {
+      return false
+    }
+    if (!hasKeyword) {
+      return true
+    }
+    const hay = v.deep ? deepHaystack(item) : shallowHaystack(item)
+    return include.every(t => hay.includes(t)) && !exclude.some(t => hay.includes(t))
+  })
+})
+
+const httpViewFiltered = computed(() => httpViewData.value.length !== httpTableData.length)
+
+function resetHTTPView() {
+  Object.assign(data.view, {
+    keyword: "", methods: [], statusClasses: [], kinds: [],
+    deep: false, onlyRewritten: false,
+  })
+}
+
+function copyAsCurl(item) {
+  CopyAsCurl(item).then(notifyResult)
+}
+
 
 const tcpheaders = [
   { value: 'Date', text: '日期', width: 150, fixed: true },
@@ -625,8 +728,19 @@ function sendReplay(draft) {
 }
 
 
+// 导出当前看到的内容。但 HAR 是按 ID 配对请求与响应的，
+// 如果过滤只留下了一半（比如按状态码筛，请求记录没有状态码会被排除），
+// 直接导出会丢掉另一半，因此按命中记录的 ID 把配对的那条补回来。
 function exportHar() {
-  ExportHAR(httpTableData.slice()).then(result => {
+  const view = httpViewData.value
+  let packets
+  if (view.length === httpTableData.length) {
+    packets = httpTableData.slice()
+  } else {
+    const ids = new Set(view.map(p => p.ID).filter(Boolean))
+    packets = httpTableData.filter(p => (p.ID ? ids.has(p.ID) : view.includes(p)))
+  }
+  ExportHAR(packets).then(result => {
     if (result == null) {
       return // 用户取消
     }
@@ -722,9 +836,13 @@ function formatRewriteRules() {
   }
 }
 
+// 清除数据要清干净：四张表都清，否则用户以为清了却还看到旧记录。
+// TCP 流表在后端，得让后端也清一次
 function clear() {
   httpTableData.length = 0;
   tcpTableData.length = 0;
+  wsTableData.length = 0;
+  ResetTCPStreams();
 }
 
 function test() {
@@ -910,6 +1028,43 @@ function stopIPCapture() {
       </el-row>
       <el-row style="margin-bottom:5px">
         <el-col>
+          <el-space wrap>
+            <el-input v-model="data.view.keyword" style="width: 300px" clearable
+              placeholder="关键字，空格分隔多个词，-词 表示排除">
+              <template #prepend>查找</template>
+            </el-input>
+            <el-select v-model="data.view.methods" multiple collapse-tags clearable placeholder="方式"
+              style="width: 150px">
+              <el-option v-for="m in ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS', 'CONNECT']" :key="m"
+                :label="m" :value="m" />
+            </el-select>
+            <el-select v-model="data.view.statusClasses" multiple collapse-tags clearable placeholder="状态"
+              style="width: 140px">
+              <el-option v-for="s in ['2xx', '3xx', '4xx', '5xx']" :key="s" :label="s" :value="s" />
+            </el-select>
+            <el-select v-model="data.view.kinds" multiple collapse-tags clearable placeholder="资源"
+              style="width: 150px">
+              <el-option v-for="(label, key) in resourceTypeText" :key="key" :label="label" :value="key" />
+            </el-select>
+            <el-switch v-model="data.view.deep" inline-prompt active-text="含头与正文" inactive-text="含头与正文" />
+            <el-switch v-model="data.view.onlyRewritten" inline-prompt active-text="仅改包" inactive-text="仅改包" />
+            <el-button size="small" @click="resetHTTPView">重置</el-button>
+            <el-text size="small" :type="httpViewFiltered ? 'warning' : 'info'">
+              {{ httpViewFiltered ? `命中 ${httpViewData.length} / 共 ${httpTableData.length}` : `共 ${httpTableData.length} 条` }}
+            </el-text>
+          </el-space>
+        </el-col>
+      </el-row>
+      <el-row style="margin-bottom:5px">
+        <el-col>
+          <el-text size="small" type="info">
+            查找只影响显示，不会丢弃已抓到的记录；上方 Host 是抓取过滤，不匹配的记录会被直接丢弃且无法恢复。
+            "含头与正文"会逐条扫描正文，记录多时明显更慢。
+          </el-text>
+        </el-col>
+      </el-row>
+      <el-row style="margin-bottom:5px">
+        <el-col>
           <el-text size="small" type="info">
             {{ certHint }}，数据目录：{{ data.dataDir }}
           </el-text>
@@ -938,7 +1093,7 @@ function stopIPCapture() {
           </el-space>
         </div>
       </el-alert>
-      <EasyDataTable :headers="httpheaders" :items="httpTableData" :table-height="httpTableHeight">
+      <EasyDataTable :headers="httpheaders" :items="httpViewData" :table-height="httpTableHeight">
         <template #expand="item">
           <div style="padding: 15px">
             <el-space wrap style="margin-bottom: 8px">
@@ -950,6 +1105,9 @@ function stopIPCapture() {
               </el-button>
               <el-button v-if="canReplay(item)" size="small" @click="openReplayDialog(item)">
                 编辑重放
+              </el-button>
+              <el-button v-if="canReplay(item)" size="small" @click="copyAsCurl(item)">
+                复制为 cURL
               </el-button>
               <el-text v-if="item.BodyTruncated" size="small" type="warning">正文已截断</el-text>
               <el-text v-if="item.Rewritten && item.Rewritten.length" size="small" type="danger">
